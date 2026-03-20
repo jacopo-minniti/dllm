@@ -42,7 +42,7 @@ module load gcc opencv arrow
 
 source ./.venv/bin/activate
 
-export NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 # export PYTHONPATH=.
 set -a          # automatically export all variables
 . ./.env        # or: source ./.env
@@ -84,3 +84,6 @@ accelerate launch \
   --machine_rank "${SLURM_PROCID}" \
   --rdzv_backend c10d \
   "${script_path}" "${FORWARD_ARGS[@]}"
+
+# Sample command
+# sbatch scripts/train.slurm.sh --accelerate_config "fsdp" --script_path "examples/llada/sft.py" --lora True --num_train_epochs 4 --dataset_args "allenai/tulu-3-sft-mixture[train:50000,test:10000]"
