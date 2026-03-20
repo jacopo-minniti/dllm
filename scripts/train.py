@@ -49,16 +49,21 @@ def main():
         "output": "--output",
         "error": "--error",
         "requeue": "--requeue",
-        "working_dir": "-D",
+        "working_dir": "--chdir",
     }
     for k, v in slurm_cfg.items():
         if k in sbatch_map:
+            flag = sbatch_map[k]
             if v is True:
-                slurm_directives.append(f"#SBATCH {sbatch_map[k]}")
+                slurm_directives.append(f"#SBATCH {flag}")
             elif v is False:
                 continue
             else:
-                slurm_directives.append(f"#SBATCH {sbatch_map[k]}={v}")
+                # Use '=' for long flags, space for short flags (though we use long flags now)
+                if flag.startswith("--"):
+                    slurm_directives.append(f"#SBATCH {flag}={v}")
+                else:
+                    slurm_directives.append(f"#SBATCH {flag} {v}")
 
     # 3. Setup WandB and Environment Variables
     wb = run_cfg.get("wandb", {})
@@ -87,14 +92,31 @@ def main():
     if not acc_config.endswith(".yaml"):
         acc_config = f"scripts/accelerate_configs/{acc_config}.yaml"
 
+    # Get working directory for script activation
+    working_dir = slurm_cfg.get("working_dir", os.getcwd())
+
     # 5. Generate the Slurm Bash Script
     # Note: We use ${SLURM_JOB_ID:+$((...))} style or just basic math for port
     bash_script = f"""{chr(10).join(slurm_directives)}
+set -e
 
 # ===== System Environment =====
+echo "Running from: $(pwd)"
+cd {working_dir}
+echo "Switched to: $(pwd)"
+
 module load slurm StdEnv/2023 python/3.11.5 cuda/12.6 cudnn
 module load gcc opencv arrow
-source ./.venv/bin/activate
+
+# Activate virtualenv - try absolute then relative
+if [ -f "{working_dir}/.venv/bin/activate" ]; then
+    source "{working_dir}/.venv/bin/activate"
+elif [ -f "./.venv/bin/activate" ]; then
+    source "./.venv/bin/activate"
+else
+    echo "Warning: Could not find .venv/bin/activate"
+fi
+
 set -a
 [ -f .env ] && . ./.env
 set +a
@@ -135,6 +157,7 @@ accelerate launch \\
         f.write(bash_script)
     
     # Submit job
+    os.makedirs(".logs", exist_ok=True)
     print(f"🚀 Submitting job via sbatch config: {args.run_config}")
     result = subprocess.run(["sbatch", temp_script])
     
