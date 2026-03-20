@@ -97,7 +97,38 @@ class BaseMetricsCallback(transformers.TrainerCallback):
             )
 
 
+
 class OnEvaluateMetricsCallback(BaseMetricsCallback):
     def on_evaluate(self, args, state, control, metrics=None, **kwargs):
         self.log_and_print(state, splits=("train", "eval"))
+        return control
+
+
+class WandbAlertCallback(transformers.TrainerCallback):
+    """
+    Sends an alert message when the run starts, provided that WandB is used.
+    """
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        if (
+            state.is_world_process_zero
+            and args.report_to
+            and "wandb" in args.report_to
+        ):
+            try:
+                import wandb
+
+                run = wandb.run
+                if run is not None:
+                    wandb.alert(
+                        title=f"Run Started: {run.name}",
+                        text=(
+                            f"Training has begun on {run.host}.\n"
+                            f"View here: {run.get_url()}"
+                        ),
+                        level=wandb.AlertLevel.INFO,
+                        wait_duration=0,  # Send immediately
+                    )
+            except (ImportError, Exception):
+                pass
         return control

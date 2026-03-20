@@ -19,7 +19,7 @@ import transformers
 from ..schedulers import BaseAlphaScheduler, LinearAlphaScheduler
 from dllm.utils.configs import TrainingArguments
 from dllm.utils.data import prepend_bos
-from .utils import NLLMetric, PPLMetric, OnEvaluateMetricsCallback
+from .utils import NLLMetric, PPLMetric, OnEvaluateMetricsCallback, WandbAlertCallback
 
 
 @dataclass
@@ -56,6 +56,7 @@ class MDLMTrainer(transformers.Trainer):
             metrics={"nll": NLLMetric(), "ppl": PPLMetric()},
         )
         self.add_callback(self.meter)
+        self.add_callback(WandbAlertCallback())
 
     def _preprocess_inputs(self, inputs):
         if self.right_shift_logits:
