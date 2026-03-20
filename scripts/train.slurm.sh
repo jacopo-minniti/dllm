@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=dllm
-#SBATCH --gpus-per-node=h100:2
-#SBATCH --time=00:10:00
+#SBATCH --gpus-per-node=h100:8
+#SBATCH --time=04:00:00
 #SBATCH --mem=40G
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=24
 #SBATCH --ntasks-per-node=1
 #SBATCH --output=./.logs/%x-%j.out
 #SBATCH --err=./.logs/%x-%j.err
 #SBATCH --requeue
 #SBATCH -D /scratch/jacopo04/dllm
+
+export WANDB_NAME="llada-lora-tulu3"
+export WANDB_TAGS="baseline"
 
 # ===== Cluster variables =====
 NUM_NODES=${SLURM_NNODES}
