@@ -1,6 +1,6 @@
 # WandB Metadata
 wandb:
-  name: "puma-bptt-tulu3"
+  name: "test"
   group: "llada-lora-tulu3"
   tags: ["puma", "bptt"]
 

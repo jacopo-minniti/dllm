@@ -137,3 +137,4 @@ dmypy.json
 /wandb/
 /.logs/
 /.models/
+.generated_train.sh
