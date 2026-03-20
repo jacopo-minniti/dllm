@@ -136,34 +136,31 @@ class WandbAlertCallback(transformers.TrainerCallback):
 
     def on_train_begin(self, args, state, control, **kwargs):
         if state.is_world_process_zero and args.report_to and "wandb" in args.report_to:
-            name = os.getenv('WANDB_NAME', 'unnamed')
             group = os.getenv('WANDB_RUN_GROUP', 'none')
             tags = os.getenv('WANDB_TAGS', 'none')
             self._send_alert(
-                title=f"🚀 Run Started: {name}",
-                text=f"Training has begun.\nGroup: {group}\nTags: {tags}\nOutput Dir: {args.output_dir}",
+                title="🚀 Run Started",
+                text=f"*Group*: `{group}`\n*Tags*: `{tags}`\n*Output Dir*: `{args.output_dir}`",               
                 level="info"
             )
         return control
 
     def on_train_end(self, args, state, control, **kwargs):
         if state.is_world_process_zero and args.report_to and "wandb" in args.report_to:
-            name = os.getenv('WANDB_NAME', 'unnamed')
             group = os.getenv('WANDB_RUN_GROUP', 'none')
             self._send_alert(
-                title=f"✅ Run Success: {name}",
-                text=f"Training completed successfully.\nGroup: {group}\nSteps: {state.global_step}",
+                title="✅ Run Success",
+                text=f"*Group*: `{group}`\n*Steps*: `{state.global_step}`\n*Status*: `Completed`",
                 level="info"
             )
         return control
 
     def on_train_error(self, args, state, control, **kwargs):
         if state.is_world_process_zero and args.report_to and "wandb" in args.report_to:
-            name = os.getenv('WANDB_NAME', 'unnamed')
             group = os.getenv('WANDB_RUN_GROUP', 'none')
             self._send_alert(
-                title=f"❌ Run Failed: {name}",
-                text=f"Training crashed.\nGroup: {group}\nLast Step: {state.global_step}",
+                title="❌ Run Failed",
+                text=f"*Group*: `{group}`\n*Last Step*: `{state.global_step}`\n*Status*: `Crashed`",
                 level="error"
             )
         return control

@@ -79,9 +79,10 @@ def train():
     def handle_sigterm(signum, frame):
         if accelerate.PartialState().is_main_process:
             if wandb.run is not None:
+                group = os.getenv('WANDB_RUN_GROUP', 'none')
                 wandb.alert(
-                    title=f"⚠️ Run Terminated (SIGTERM): {os.getenv('WANDB_NAME', 'unnamed')}",
-                    text=f"Slurm is terminating the job (likely pre-emption or timeout).\nLast Step: ???",
+                    title="⚠️ Run Terminated (SIGTERM)",
+                    text=f"*Group*: `{group}`\n*Status*: `Pre-empted or Timeout`",
                     level=wandb.AlertLevel.WARN
                 )
                 time.sleep(2)
@@ -147,9 +148,10 @@ def train():
             import wandb
             import time
             if wandb.run is not None:
+                group = os.getenv('WANDB_RUN_GROUP', 'none')
                 wandb.alert(
-                    title=f"❌ Run Failed: {os.getenv('WANDB_NAME', 'unnamed')}",
-                    text=f"Training crashed with error: {str(e)}\nGroup: {os.getenv('WANDB_RUN_GROUP', 'none')}",
+                    title="❌ Run Failed",
+                    text=f"*Group*: `{group}`\n*Error*: `{str(e)[:500]}`",
                     level=wandb.AlertLevel.ERROR
                 )
                 time.sleep(5)  # Give time for the alert to be sent
