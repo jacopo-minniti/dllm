@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=dllm
+#SBATCH --gpus-per-node=h100:1
+#SBATCH --time=00:30:00
+#SBATCH --mem=40G
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:8
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=16
 #SBATCH --ntasks-per-node=1
-#SBATCH --partition=mllm_safety
-#SBATCH --quotatype=spot
 #SBATCH --output=./.logs/%x-%j.out
 #SBATCH --err=./.logs/%x-%j.err
 #SBATCH --requeue
-#SBATCH --time=3-00:00:00
+#SBATCH -D /scratch/jacopo04/dllm
 
 # ===== Cluster variables =====
 NUM_NODES=${SLURM_NNODES}
@@ -36,8 +36,18 @@ done
 echo "============================"
 
 # ===== Environment =====
+# module --force purge
+module load slurm StdEnv/2023 python/3.11.5 cuda/12.6 cudnn
+module load gcc opencv arrow
+
+source ./.venv/bin/activate
+
 export NCCL_ASYNC_ERROR_HANDLING=1
-export PYTHONPATH=.
+# export PYTHONPATH=.
+set -a          # automatically export all variables
+. ./.env        # or: source ./.env
+set +a          # stop auto-exporting
+
 
 # ===== Default options =====
 accelerate_config="zero2"
@@ -65,13 +75,12 @@ printf '%s\n' "${FORWARD_ARGS[@]}" | xargs -n 2
 echo "============================"
 
 # ===== Launch =====
-srun --nodes="${NUM_NODES}" --ntasks="${NUM_NODES}" --nodelist="${SLURM_JOB_NODELIST}" \
-  accelerate launch \
-    --config_file "scripts/accelerate_configs/${accelerate_config}.yaml" \
-    --num_machines "${NUM_NODES}" \
-    --num_processes "${WORLD_SIZE}" \
-    --main_process_ip "${MASTER_ADDR}" \
-    --main_process_port "${MASTER_PORT}" \
-    --machine_rank "${SLURM_PROCID}" \
-    --rdzv_backend c10d \
-    "${script_path}" "${FORWARD_ARGS[@]}"
+accelerate launch \
+  --config_file "scripts/accelerate_configs/${accelerate_config}.yaml" \
+  --num_machines "${NUM_NODES}" \
+  --num_processes "${WORLD_SIZE}" \
+  --main_process_ip "${MASTER_ADDR}" \
+  --main_process_port "${MASTER_PORT}" \
+  --machine_rank "${SLURM_PROCID}" \
+  --rdzv_backend c10d \
+  "${script_path}" "${FORWARD_ARGS[@]}"
