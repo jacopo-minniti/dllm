@@ -15,9 +15,13 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from tqdm import tqdm
 
-import dllm
-from dllm.core.samplers import BaseSampler, BaseSamplerConfig
-from dllm.utils.configs import ModelArguments
+from ..samplers import BaseSampler, BaseSamplerConfig
+from ...utils import (
+    get_model,
+    get_tokenizer,
+    sample_trim,
+)
+from ...utils.configs import ModelArguments
 
 
 @dataclass
@@ -81,12 +85,12 @@ class BaseEvalHarness(LM):
         if "pretrained" in kwargs:
             kwargs.setdefault("model_name_or_path", kwargs["pretrained"])
         self.model_args = self._build_config(ModelArguments, model_args, kwargs)
-        self.model = dllm.utils.get_model(
+        self.model = get_model(
             self.model_args,
             config=eval_config.get_model_config(self.model_args.model_name_or_path),
         )
         self.model.eval()
-        self.tokenizer = dllm.utils.get_tokenizer(self.model_args)
+        self.tokenizer = get_tokenizer(self.model_args)
         if sampler_config is not None:
             self.sampler_config = self._build_config(
                 type(sampler_config), sampler_config, kwargs
@@ -157,7 +161,7 @@ class BaseEvalHarness(LM):
                 config=self.sampler_config,
                 return_dict=False,
             )
-            generated_answers = dllm.utils.sample_trim(
+            generated_answers = sample_trim(
                 self.tokenizer,
                 generated_ids.tolist(),
                 [p.tolist() for p in prompts],

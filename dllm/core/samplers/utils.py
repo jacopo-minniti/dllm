@@ -1,6 +1,6 @@
 import torch
 
-from dllm.core.schedulers import BaseAlphaScheduler
+from ..schedulers import BaseAlphaScheduler
 
 
 def get_num_transfer_tokens(

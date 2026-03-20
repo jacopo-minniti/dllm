@@ -9,8 +9,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from dllm.core.samplers.base import BaseSampler, BaseSamplerConfig, BaseSamplerOutput
-from dllm.core.samplers.utils import add_gumbel_noise, get_num_transfer_tokens
+from .base import BaseSampler, BaseSamplerConfig, BaseSamplerOutput
+from .utils import add_gumbel_noise, get_num_transfer_tokens
 
 
 @dataclass
