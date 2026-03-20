@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=dllm
-#SBATCH --gpus-per-node=h100:1
-#SBATCH --time=00:30:00
+#SBATCH --gpus-per-node=h100:2
+#SBATCH --time=00:10:00
 #SBATCH --mem=40G
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
