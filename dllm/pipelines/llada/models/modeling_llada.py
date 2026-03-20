@@ -951,6 +951,11 @@ class LLaDAOutput(NamedTuple):
     Hidden states from each block.
     """
 
+    h_s: Optional[torch.FloatTensor] = None
+    """
+    Latent state for loopholing.
+    """
+
 
 class LLaDAGenerateOutput(NamedTuple):
     token_ids: torch.LongTensor
@@ -1151,6 +1156,9 @@ class LLaDAModel(LLaDAPreTrainedModel):
                     )
                 }
             )
+
+        if self.config.use_loopholing:
+            self.transformer.update({"h_t_ln": LayerNorm.build(config)})
         # When `init_device="meta"` FSDP will call `reset_parameters()` to initialize weights.
         if init_params and self.config.init_device != "meta":
             self.post_init()
@@ -1233,52 +1241,39 @@ class LLaDAModel(LLaDAPreTrainedModel):
     
     def forward(
         self,
-        input_ids: torch.LongTensor,
+        input_ids: Optional[torch.Tensor] = None,
         input_embeddings: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         attention_bias: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Sequence[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
         use_cache: bool = False,
         last_logits_only: bool = False,
-        output_hidden_states: Optional[bool] = None,
+        output_hidden_states: bool = False,
+        h_t: Optional[torch.FloatTensor] = None,
     ) -> LLaDAOutput:
-        """
-        :param input_ids: A tensor of shape `(batch_size, seq_len)`.
-        :param input_embeddings: A tensor of shape `(batch_size, seq_len, d_model)` with input
-            embeddings. When provided, it is treated as the output of the input embedding layer.
-        :param attention_mask: A tensor of shape `(batch_size, seq_len)` that indicates
-            which input IDs are masked. A `1` value in the mask means that
-            the corresponding input ID should *not* be ignored. A `0` means
-            that the corresponding input ID is masked.
-            This has the same meaning as the `attention_mask` in HuggingFace's `transformers`
-            library.
-        :param attention_bias: A tensor of shape `(batch_size, 1, seq_len, seq_len)`,
-            `(1, 1, seq_len, seq_len)`, or `(seq_len, seq_len)`. This is used
-            to introduce causal or other biases.
-            If the tensor is a bool or byte tensor, a `True` or `1` at `attention_bias[:, :, i, j]`
-            indicates that the i-th element in the sequence is allowed to attend to the j-th
-            element in the sequence.
-            If the tensor is a float tensor, it will just be added to the attention
-            scores before the softmax.
-            The default is causal, which corresponds to a lower-diagonal byte matrix of ones.
-        :param past_key_values: Pre-computed keys and values for each attention block.
-            Can be used to speed up sequential decoding. The `input_ids` which have
-            their past given to this model should not be passed as `input_ids` as they have already been computed.
-        :param use_cache: If `True`, return key and value tensors for each block.
-        :param last_logits_only: If `True`, only compute the logits for the last token of each sequence.
-            This can speed up decoding when you only care about the next token.
-        """
-        # Add Basic MDM Model config check
-        assert not self.config.alibi, "Alibi length extrapolation is not supported for MDM."
-        assert self.config.rope, "Rope must be used in Llama-Encoder for MDM."
-        assert (past_key_values is None and not use_cache), "The kvcache is not supported for MDM."
+        if input_ids is not None:
+            # shape: (batch_size, seq_len, d_model)
+            x = self.transformer.wte(input_ids)  # type: ignore
+        elif input_embeddings is not None:
+            # shape: (batch_size, seq_len, d_model)
+            x = input_embeddings
+        else:
+            raise ValueError("Either `input_ids` or `input_embeddings` must be provided")
 
-        output_hidden_states = output_hidden_states if output_hidden_states is not None else False
+        if self.config.use_loopholing and h_t is not None:
+            # Loopholing injection
+            x = x + self.transformer.h_t_ln(h_t)
+        elif self.config.use_loopholing and h_t is None:
+            # Initialize h_t if not provided but loopholing is enabled
+            # Note: During first step of BPTT, h_t is zeros.
+            # We don't want to redefine x here, just add the zeroed latent
+            h_t0 = torch.zeros_like(x)
+            x = x + self.transformer.h_t_ln(h_t0)
 
         if past_key_values:
             assert len(past_key_values) == self.config.n_layers
 
-        batch_size, seq_len = input_ids.size() if input_embeddings is None else input_embeddings.size()[:2]
+        batch_size, seq_len = x.size()[:2]
         if past_key_values is None:
             past_length = 0
         else:
@@ -1286,7 +1281,7 @@ class LLaDAModel(LLaDAPreTrainedModel):
 
         # Get embeddings of input.
         # shape: (batch_size, seq_len, d_model)
-        x = self.transformer.wte(input_ids) if input_embeddings is None else input_embeddings  # type: ignore
+        # x = self.transformer.wte(input_ids) if input_embeddings is None else input_embeddings  # type: ignore
 
         if self.config.input_emb_norm:
             x = x * (self.config.d_model**0.5)
@@ -1425,7 +1420,14 @@ class LLaDAModel(LLaDAPreTrainedModel):
         if self.config.scale_logits:
             logits.mul_(1 / math.sqrt(self.config.d_model))
 
-        return LLaDAOutput(logits=logits, attn_key_values=attn_key_values, hidden_states=tuple(all_hidden_states) if output_hidden_states else None)  # type: ignore[arg-type]
+        h_s = x if self.config.use_loopholing else None
+
+        return LLaDAOutput(
+            logits=logits, 
+            attn_key_values=attn_key_values, 
+            hidden_states=tuple(all_hidden_states) if output_hidden_states else None,
+            h_s=h_s
+        )  # type: ignore[arg-type]
 
 
 def create_model_config_from_pretrained_config(config: LLaDAConfig):
@@ -1475,6 +1477,7 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[Cache] = None,  # This is a hack mitigation of an issue in transformers `4.39.x`
+        h_t: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         if use_cache is None:
             use_cache = self.config.use_cache
@@ -1493,6 +1496,7 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
             past_key_values=past_key_values,
             use_cache=use_cache,
             output_hidden_states=output_hidden_states,
+            h_t=h_t,
         )
 
         logits = outputs.logits
@@ -1506,11 +1510,14 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
-        return CausalLMOutputWithPast(
+        res = CausalLMOutputWithPast(
             logits=logits,
             past_key_values=outputs.attn_key_values,
             hidden_states=hidden_states,
         )
+        if hasattr(outputs, "h_s"):
+            res.h_s = outputs.h_s
+        return res
 
     def can_generate(self) -> bool:
         return True

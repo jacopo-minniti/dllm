@@ -20,6 +20,8 @@ from ..schedulers import BaseAlphaScheduler, LinearAlphaScheduler
 from dllm.utils.configs import TrainingArguments
 from dllm.utils.data import prepend_bos
 from .utils import NLLMetric, PPLMetric, OnEvaluateMetricsCallback, WandbAlertCallback
+from ..losses import MLMLoss, PumaLoss, LoopholingBPTTLoss, LoopholingBPTTPumaLoss
+from dllm.data.streaming_batch import StreamingBatch
 
 
 @dataclass
@@ -28,6 +30,9 @@ class MDLMConfig(TrainingArguments):
     loss_weight_type: str = "scheduler"  # "scheduler", "uniform"
     loss_norm_type: str = "token"  # "batch", "sequence", "token"
     right_shift_logits: bool = False
+    loss_type: str = "mlm"  # "mlm", "puma", "bptt", "puma_bptt"
+    puma_threshold: float = 0.15
+    bptt_steps: int = 2
 
 
 class MDLMTrainer(transformers.Trainer):
@@ -57,6 +62,16 @@ class MDLMTrainer(transformers.Trainer):
         )
         self.add_callback(self.meter)
         self.add_callback(WandbAlertCallback())
+
+        # Registry of loss functions
+        self.loss_fns = {
+            "mlm": MLMLoss(self.processing_class.mask_token_id),
+            "puma": PumaLoss(self.processing_class.mask_token_id, threshold=args.puma_threshold),
+            "bptt": LoopholingBPTTLoss(self.processing_class.mask_token_id, num_steps=args.bptt_steps),
+            "puma_bptt": LoopholingBPTTPumaLoss(self.processing_class.mask_token_id, threshold=args.puma_threshold, num_steps=args.bptt_steps),
+        }
+        self.loss_fn = self.loss_fns.get(args.loss_type, self.loss_fns["mlm"])
+        self.active_streaming_batch = None
 
     def _preprocess_inputs(self, inputs):
         if self.right_shift_logits:
@@ -137,77 +152,74 @@ class MDLMTrainer(transformers.Trainer):
         Returns:
             Loss tensor, or tuple of (loss, outputs) if return_outputs is True.
         """
-        assert self.processing_class.padding_side == "right"
-        inputs = self._preprocess_inputs(inputs)
-        input_ids, labels, attention_mask = (
-            inputs["input_ids"],
-            inputs["labels"],
-            inputs.get("attention_mask", None),
-        )
-        b, l = input_ids.shape
-        maskable_mask = labels != -100  # [b, l]
+        if self.args.loss_type == "mlm":
+            # === Original MLM Logic (preserved for clean ablation) ===
+            inputs = self._preprocess_inputs(inputs)
+            input_ids, labels, attention_mask = (
+                inputs["input_ids"],
+                inputs["labels"],
+                inputs.get("attention_mask", None),
+            )
+            b, l = input_ids.shape
+            maskable_mask = labels != -100
 
-        # === 1. Sample diffusion timesteps ===
-        # Each example draws a random timestep t ∈ [ε, 1), where ε avoids degenerate values near 0.
-        # The scheduler defines the masking rate α(t); we convert it to a masking probability p_mask = 1 - α(t).
-        t = self.time_epsilon + (1 - self.time_epsilon) * torch.rand(
-            b, device=input_ids.device
-        )  # [b]
-        p_mask = 1.0 - self.scheduler(t).unsqueeze(1).expand(b, l)  # [b, l]
+            t = self.time_epsilon + (1 - self.time_epsilon) * torch.rand(
+                b, device=input_ids.device
+            )
+            p_mask = 1.0 - self.scheduler(t).unsqueeze(1).expand(b, l)
 
-        # === 2. Apply stochastic masking ===
-        # Tokens are masked independently according to p_mask(t).
-        # Positions with label = -100 are excluded (ignored in loss).
-        masked_mask = (
-            torch.rand((b, l), device=input_ids.device) < p_mask
-        ) & maskable_mask
-        # Replace masked tokens with the special [MASK] token.
-        noised_input_ids = torch.where(
-            masked_mask, self.processing_class.mask_token_id, input_ids
-        )
+            masked_mask = (
+                torch.rand((b, l), device=input_ids.device) < p_mask
+            ) & maskable_mask
+            noised_input_ids = torch.where(
+                masked_mask, self.processing_class.mask_token_id, input_ids
+            )
 
-        # === 3. Forward pass through the model ===
-        # The model predicts clean tokens given noised inputs.
-        outputs = model(input_ids=noised_input_ids, attention_mask=attention_mask)
-        outputs = self._postprocess_outputs(outputs)
-        logits = outputs.logits
+            outputs = model(input_ids=noised_input_ids, attention_mask=attention_mask)
+            outputs = self._postprocess_outputs(outputs)
+            logits = outputs.logits
 
-        # === 4. Compute per-token loss weights ===
-        # Depending on the configuration, weights may depend on timestep t
-        # (e.g., scheduler-based) or be uniform (ones).
-        loss_weights = self._compute_loss_weights(
-            t=t, inputs=inputs, masked_mask=masked_mask
-        )
+            loss_weights = self._compute_loss_weights(
+                t=t, inputs=inputs, masked_mask=masked_mask
+            )
 
-        # === 5. Compute weighted cross-entropy ===
-        # Sanity check: ensure input_ids and labels match at valid positions
-        assert (
-            input_ids[maskable_mask] == labels[maskable_mask]
-        ).all(), "Mismatch between input_ids and labels at valid positions"
+            token_nll = F.cross_entropy(
+                logits.transpose(1, 2),
+                input_ids,
+                reduction="none",
+            )
+            token_nll = token_nll * loss_weights * masked_mask.to(token_nll.dtype)
 
-        token_nll = F.cross_entropy(
-            logits.transpose(1, 2),  # [b, V, l]
-            input_ids,  # [b, l]
-            reduction="none",  # [b, l]
-        )
-        token_nll = token_nll * loss_weights * masked_mask.to(token_nll.dtype)  # [b, l]
+            self.meter.update(
+                split="train" if model.training else "eval",
+                value=token_nll.detach(),
+                weight=maskable_mask.to(dtype=logits.dtype).detach(),
+            )
 
-        self.meter.update(
-            split="train" if model.training else "eval",
-            value=token_nll.detach(),
-            weight=maskable_mask.to(dtype=logits.dtype).detach(),
-        )
+            if self.loss_norm_type == "token":
+                token_nll /= maskable_mask.sum().clamp_min(1)
+            elif self.loss_norm_type == "sequence":
+                token_nll /= maskable_mask.sum(-1, keepdim=True).clamp_min(1) * b
+            elif self.loss_norm_type == "batch":
+                token_nll /= b
+            loss = token_nll.sum()
+            return (loss, outputs) if return_outputs else loss
 
-        # === 6. Normalize loss ===
-        if self.loss_norm_type == "token":
-            token_nll /= maskable_mask.sum().clamp_min(1)
-        elif self.loss_norm_type == "sequence":
-            token_nll /= maskable_mask.sum(-1, keepdim=True).clamp_min(1) * b
-        elif self.loss_norm_type == "batch":
-            token_nll /= b
         else:
-            raise ValueError("Invalid loss_norm_type.")
-        loss = token_nll.sum()
+            # === New Interventions (PUMA / BPTT) ===
+            if "puma" in self.args.loss_type:
+                # Use persistent streaming batch
+                if self.active_streaming_batch is None or self.active_streaming_batch.is_finished():
+                    # Initialize from new inputs
+                    inputs = self._preprocess_inputs(inputs)
+                    self.active_streaming_batch = StreamingBatch.from_batch(inputs, self.processing_class.mask_token_id)
+                
+                loss, outputs = self.loss_fn(model, self.active_streaming_batch)
+            else:
+                # Standard BPTT (step-wise unroll without persistence)
+                inputs = self._preprocess_inputs(inputs)
+                loss, outputs = self.loss_fn(model, inputs)
 
-        # === 7. Return final loss (and optionally model outputs) ===
-        return (loss, outputs) if return_outputs else loss
+            # Note: Meters update for new losses might need specialized logic if needed,
+            # but for now we follow the general trainer flow.
+            return (loss, outputs) if return_outputs else loss

@@ -301,6 +301,11 @@ class ModelConfig():
     If ``True``, scale the output logits by ``1 / sqrt(d_model)``.
     """
 
+    use_loopholing: bool = False
+    """
+    Whether to use loopholing (latent state injection across steps).
+    """
+
     vocab_size: int = 50257
     """
     Vocabulary size of the model.

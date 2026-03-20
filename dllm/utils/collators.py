@@ -174,6 +174,27 @@ class RandomTruncateWrapper(CollatorWrapper):
         return outputs
 
 
+@dataclass
+class MaskAllWrapper(CollatorWrapper):
+    """
+    Collator wrapper that masks all tokens in the batch.
+    Useful for initializing PUMA streaming buffers.
+    """
+    mask_token_id: int = None
+    label_pad_token_id: int = -100
+
+    def after(self, outputs):
+        assert self.mask_token_id is not None
+        input_ids = outputs["input_ids"]
+        labels = outputs.get("labels")
+
+        if labels is not None:
+            maskable_mask = labels != self.label_pad_token_id
+            input_ids[maskable_mask] = self.mask_token_id
+
+        return outputs
+
+
 if __name__ == "__main__":
     # Load tokenizer
     tokenizer = transformers.AutoTokenizer.from_pretrained("t5-small")
