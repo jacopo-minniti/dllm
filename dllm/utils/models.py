@@ -5,8 +5,8 @@ import torch
 import transformers
 from peft import prepare_model_for_kbit_training
 
-from dllm.utils.configs import ModelArguments, TrainingArguments
-from dllm.utils.utils import disable_caching_allocator_warmup, load_peft, print_main
+from .configs import ModelArguments, TrainingArguments
+from .utils import disable_caching_allocator_warmup, load_peft, print_main
 
 
 def get_model(

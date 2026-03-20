@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import transformers
 
-from dllm.core.schedulers import BaseAlphaScheduler, LinearAlphaScheduler
+from ..schedulers import BaseAlphaScheduler, LinearAlphaScheduler
 from dllm.utils.configs import TrainingArguments
 from dllm.utils.data import prepend_bos
 from .utils import NLLMetric, PPLMetric, OnEvaluateMetricsCallback

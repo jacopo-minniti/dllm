@@ -1,4 +1,4 @@
-from . import chat, collators, configs, data, models, sampling, utils, visualizers
+from . import utils, chat, collators, configs, data, models, sampling, visualizers
 from .chat import (
     banner_line,
     boxed,
