@@ -70,7 +70,8 @@ class TrainingArguments(transformers.TrainingArguments):
 
     def __post_init__(self):
         super().__post_init__()
-        self.run_name = self.run_name or self.output_dir
+        # Priority: explicit CLI arg > WANDB_NAME env var > output_dir
+        self.run_name = self.run_name or os.getenv("WANDB_NAME") or self.output_dir
         if self.group_by_length:
             logger.info(
                 "training_args.group_by_length=True: preprocessing "

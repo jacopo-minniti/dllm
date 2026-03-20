@@ -106,29 +106,54 @@ class OnEvaluateMetricsCallback(BaseMetricsCallback):
 
 class WandbAlertCallback(transformers.TrainerCallback):
     """
-    Sends an alert message when the run starts, provided that WandB is used.
+    Sends alerts to WandB (and thus Slack if configured) for run events.
     """
 
-    def on_train_begin(self, args, state, control, **kwargs):
-        if (
-            state.is_world_process_zero
-            and args.report_to
-            and "wandb" in args.report_to
-        ):
-            try:
-                import wandb
+    def _send_alert(self, title: str, text: str, level: str = "info"):
+        try:
+            import wandb
+            # Check if run exists and is active. Sometimes on_train_begin is too early.
+            run = wandb.run
+            if run is not None:
+                # Map string level to wandb.AlertLevel
+                alert_level = {
+                    "info": wandb.AlertLevel.INFO,
+                    "warn": wandb.AlertLevel.WARN,
+                    "error": wandb.AlertLevel.ERROR,
+                }.get(level.lower(), wandb.AlertLevel.INFO)
 
-                run = wandb.run
-                if run is not None:
-                    wandb.alert(
-                        title=f"Run Started: {run.name}",
-                        text=(
-                            f"Training has begun on {run.host}.\n"
-                            f"View here: {run.get_url()}"
-                        ),
-                        level=wandb.AlertLevel.INFO,
-                        wait_duration=0,  # Send immediately
-                    )
-            except (ImportError, Exception):
-                pass
+                wandb.alert(
+                    title=title,
+                    text=text,
+                    level=alert_level,
+                    wait_duration=0,
+                )
+        except (ImportError, Exception):
+            pass
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        if state.is_world_process_zero and args.report_to and "wandb" in args.report_to:
+            self._send_alert(
+                title=f"🚀 Run Started: {os.getenv('WANDB_NAME', 'unnamed')}",
+                text=f"Training has begun.\nOutput Dir: {args.output_dir}",
+                level="info"
+            )
+        return control
+
+    def on_train_end(self, args, state, control, **kwargs):
+        if state.is_world_process_zero and args.report_to and "wandb" in args.report_to:
+            self._send_alert(
+                title=f"✅ Run Success: {os.getenv('WANDB_NAME', 'unnamed')}",
+                text=f"Training completed successfully after {state.global_step} steps.",
+                level="info"
+            )
+        return control
+
+    def on_train_error(self, args, state, control, **kwargs):
+        if state.is_world_process_zero and args.report_to and "wandb" in args.report_to:
+            self._send_alert(
+                title=f"❌ Run Failed: {os.getenv('WANDB_NAME', 'unnamed')}",
+                text=f"Training crashed.\nLast Step: {state.global_step}",
+                level="error"
+            )
         return control

@@ -15,6 +15,10 @@ export WANDB_RUN_GROUP="llada-lora-tulu3"
 export WANDB_NAME="test"
 export WANDB_TAGS="baseline"
 
+# WandB settings to help with faster crash detection and stability
+export WANDB_INIT_TIMEOUT=300
+export WANDB_DEBUG=false
+
 # ===== Cluster variables =====
 NUM_NODES=${SLURM_NNODES}
 GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | wc -l)
