@@ -129,32 +129,41 @@ class WandbAlertCallback(transformers.TrainerCallback):
                     level=alert_level,
                     wait_duration=0,
                 )
+                import time
+                time.sleep(2)  # Give time to send
         except (ImportError, Exception):
             pass
 
     def on_train_begin(self, args, state, control, **kwargs):
         if state.is_world_process_zero and args.report_to and "wandb" in args.report_to:
+            name = os.getenv('WANDB_NAME', 'unnamed')
+            group = os.getenv('WANDB_RUN_GROUP', 'none')
+            tags = os.getenv('WANDB_TAGS', 'none')
             self._send_alert(
-                title=f"🚀 Run Started: {os.getenv('WANDB_NAME', 'unnamed')}",
-                text=f"Training has begun.\nOutput Dir: {args.output_dir}",
+                title=f"🚀 Run Started: {name}",
+                text=f"Training has begun.\nGroup: {group}\nTags: {tags}\nOutput Dir: {args.output_dir}",
                 level="info"
             )
         return control
 
     def on_train_end(self, args, state, control, **kwargs):
         if state.is_world_process_zero and args.report_to and "wandb" in args.report_to:
+            name = os.getenv('WANDB_NAME', 'unnamed')
+            group = os.getenv('WANDB_RUN_GROUP', 'none')
             self._send_alert(
-                title=f"✅ Run Success: {os.getenv('WANDB_NAME', 'unnamed')}",
-                text=f"Training completed successfully after {state.global_step} steps.",
+                title=f"✅ Run Success: {name}",
+                text=f"Training completed successfully.\nGroup: {group}\nSteps: {state.global_step}",
                 level="info"
             )
         return control
 
     def on_train_error(self, args, state, control, **kwargs):
         if state.is_world_process_zero and args.report_to and "wandb" in args.report_to:
+            name = os.getenv('WANDB_NAME', 'unnamed')
+            group = os.getenv('WANDB_RUN_GROUP', 'none')
             self._send_alert(
-                title=f"❌ Run Failed: {os.getenv('WANDB_NAME', 'unnamed')}",
-                text=f"Training crashed.\nLast Step: {state.global_step}",
+                title=f"❌ Run Failed: {name}",
+                text=f"Training crashed.\nGroup: {group}\nLast Step: {state.global_step}",
                 level="error"
             )
         return control

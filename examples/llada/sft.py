@@ -28,6 +28,7 @@ Slurm users
 """
 
 import os
+import sys
 from dataclasses import dataclass, field
 from functools import partial
 
@@ -70,6 +71,23 @@ def train():
         (ModelArguments, DataArguments, TrainingArguments)
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    
+    # Handle SIGTERM (e.g. Slurm pre-emption or time limit)
+    import signal
+    import wandb
+    import time
+    def handle_sigterm(signum, frame):
+        if accelerate.PartialState().is_main_process:
+            if wandb.run is not None:
+                wandb.alert(
+                    title=f"⚠️ Run Terminated (SIGTERM): {os.getenv('WANDB_NAME', 'unnamed')}",
+                    text=f"Slurm is terminating the job (likely pre-emption or timeout).\nLast Step: ???",
+                    level=wandb.AlertLevel.WARN
+                )
+                time.sleep(2)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
     dllm.utils.print_args_main(model_args, data_args, training_args)
     dllm.utils.initial_training_setup(model_args, data_args, training_args)
 
@@ -118,11 +136,24 @@ def train():
             )
         ),
     )
-    trainer.train()
-    trainer.save_model(os.path.join(training_args.output_dir, "checkpoint-final"))
-    trainer.processing_class.save_pretrained(
-        os.path.join(training_args.output_dir, "checkpoint-final")
-    )
+    try:
+        trainer.train()
+        trainer.save_model(os.path.join(training_args.output_dir, "checkpoint-final"))
+        trainer.processing_class.save_pretrained(
+            os.path.join(training_args.output_dir, "checkpoint-final")
+        )
+    except Exception as e:
+        if accelerate.PartialState().is_main_process:
+            import wandb
+            import time
+            if wandb.run is not None:
+                wandb.alert(
+                    title=f"❌ Run Failed: {os.getenv('WANDB_NAME', 'unnamed')}",
+                    text=f"Training crashed with error: {str(e)}\nGroup: {os.getenv('WANDB_RUN_GROUP', 'none')}",
+                    level=wandb.AlertLevel.ERROR
+                )
+                time.sleep(5)  # Give time for the alert to be sent
+        raise e
 
 
 if __name__ == "__main__":
