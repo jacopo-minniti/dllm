@@ -138,7 +138,7 @@ def train():
         ),
     )
     try:
-        trainer.train()
+        trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
         trainer.save_model(os.path.join(training_args.output_dir, "checkpoint-final"))
         trainer.processing_class.save_pretrained(
             os.path.join(training_args.output_dir, "checkpoint-final")

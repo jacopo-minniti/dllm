@@ -66,7 +66,11 @@ class TrainingArguments(transformers.TrainingArguments):
     eval_strategy: str = "steps"
     eval_steps: float = 0.1
     save_steps: float = 0.1
-    save_only_model: bool = True
+    save_only_model: bool = False
+    resume_from_checkpoint: str = field(
+        default=None,
+        metadata={"help": "Path to a previous checkpoint or 'True' to find latest."},
+    )
 
     def __post_init__(self):
         super().__post_init__()
