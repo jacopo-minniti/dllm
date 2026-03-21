@@ -157,9 +157,9 @@ srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch \\
 """
 
     # Write to a temporary file
-    temp_script = ".generated_train.sh"
-    with open(temp_script, "w") as f:
-        f.write(bash_script)
+    # temp_script = ".generated_train.sh"
+    # with open(temp_script, "w") as f:
+    #     f.write(bash_script)
     
     # Submit job
     os.makedirs(".logs", exist_ok=True)
