@@ -98,7 +98,9 @@ def train():
     tokenizer = dllm.utils.get_tokenizer(model_args=model_args)
 
     # ----- Dataset ----------------------------------------------------------------
-    with accelerate.PartialState().local_main_process_first():
+    # Use global rank 0 first to download and prepare the dataset (especially for multi-node)
+    state = accelerate.PartialState()
+    with state.main_process_first():
         dataset = dllm.data.load_sft_dataset(
             data_args.dataset_args,
             load_preprocessed_data=data_args.load_preprocessed_data,
@@ -109,9 +111,11 @@ def train():
                 tokenizer=tokenizer,
                 mask_prompt_loss=data_args.mask_prompt_loss,
             )
+            # Only use multiple processes for mapping on the main process to avoid thundering herd on cache locks
+            # For non-main processes, they should just load the cached version.
             dataset = dataset.map(
                 map_fn,
-                num_proc=data_args.num_proc,
+                num_proc=data_args.num_proc if state.is_main_process else 1,
                 desc="Mapping dataset to SFT format",
             )
         # truncate / filter long sequences if needed

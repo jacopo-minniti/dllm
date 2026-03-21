@@ -29,10 +29,18 @@ def load_sft_dataset(
 
     specs = [p.strip() for p in re.split(r"[|+]", dataset_args) if p.strip()]
     all_parts = []
+    
+    import time
+    from accelerate import PartialState
+    state = PartialState()
 
     for raw in specs:
-        dataset_name_or_path, kvs = parse_spec(raw)
+        # Stagger loading to avoid thundering herd on file system locks (NFS/Lustre)
+        # especially important after main_process_first releases all ranks.
+        if not state.is_main_process:
+            time.sleep(0.1 * (state.process_index % 64))
 
+        dataset_name_or_path, kvs = parse_spec(raw)
         dataset_name_or_path = resolve_with_base_env(
             dataset_name_or_path, "BASE_DATASETS_DIR"
         )
@@ -104,6 +112,14 @@ def load_pt_dataset(
         - Applies identical matching logic for both streaming/non-streaming.
         """
         dataset_name_or_path, kvs = parse_spec(raw)
+        
+        # Stagger loading to avoid thundering herd on file system locks (NFS/Lustre)
+        import time
+        from accelerate import PartialState
+        state = PartialState()
+        if not state.is_main_process:
+            time.sleep(0.1 * (state.process_index % 64))
+
         dataset_name_or_path = resolve_with_base_env(
             dataset_name_or_path, "BASE_DATASETS_DIR"
         )
