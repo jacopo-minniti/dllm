@@ -142,7 +142,15 @@ def train():
         ),
     )
     try:
-        trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
+        # Handle cases where resume_from_checkpoint might be string "True"/"False" from CLI/YAML
+        resume_checkpoint = training_args.resume_from_checkpoint
+        if isinstance(resume_checkpoint, str):
+            if resume_checkpoint.lower() == "true":
+                resume_checkpoint = True
+            elif resume_checkpoint.lower() == "false":
+                resume_checkpoint = None
+
+        trainer.train(resume_from_checkpoint=resume_checkpoint)
         trainer.save_model(os.path.join(training_args.output_dir, "checkpoint-final"))
         trainer.processing_class.save_pretrained(
             os.path.join(training_args.output_dir, "checkpoint-final")

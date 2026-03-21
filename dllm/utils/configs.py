@@ -68,7 +68,7 @@ class TrainingArguments(transformers.TrainingArguments):
     save_steps: float = 0.1
     save_only_model: bool = False
     resume_from_checkpoint: str = field(
-        default="True",
+        default=None,
         metadata={"help": "Path to a previous checkpoint or 'True' to find latest."},
     )
 
