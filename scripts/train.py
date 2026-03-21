@@ -123,6 +123,11 @@ set +a
 
 # ===== Exports =====
 {chr(10).join(env_exports)}
+export NCCL_IB_DISABLE=1
+export NCCL_IB_GID_INDEX=3
+export NCCL_SOCKET_IFNAME=eth0,enp,eno
+export NCCL_DEBUG=INFO
+export PYTHONUNBUFFERED=1
 
 # ===== Scale Calculation =====
 NUM_NODES=${{SLURM_NNODES:-1}}
@@ -137,18 +142,20 @@ if [ -z "$SLURM_JOB_ID" ]; then
     SLURM_PROCID=0
 fi
 
-echo "Launching: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_ADDR:$MASTER_PORT"
+echo "Launching: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_ADDR:$MASTER_PORT (via srun)"
 
 # ===== Execution =====
-accelerate launch \\
-  --config_file "{acc_config}" \\
-  --num_machines "${{NUM_NODES}}" \\
-  --num_processes "${{WORLD_SIZE}}" \\
-  --main_process_ip "${{MASTER_ADDR}}" \\
-  --main_process_port "${{MASTER_PORT}}" \\
-  --machine_rank "${{SLURM_PROCID:-0}}" \\
+# We use srun with --ntasks-per-node=1 to start one 'accelerate launch' per node.
+# The machine_rank is set to \$SLURM_NODEID (escaped so it's expanded by srun's shell instance).
+srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch \\
+  --config_file \"{acc_config}\" \\
+  --num_machines \"${{NUM_NODES}}\" \\
+  --num_processes \"${{WORLD_SIZE}}\" \\
+  --main_process_ip \"${{MASTER_ADDR}}\" \\
+  --main_process_port \"${{MASTER_PORT}}\" \\
+  --machine_rank \"\$SLURM_NODEID\" \\
   --rdzv_backend c10d \\
-  "{script_path}" {" ".join(train_flags)}
+  \"{script_path}\" {" ".join(train_flags)}"
 """
 
     # Write to a temporary file
