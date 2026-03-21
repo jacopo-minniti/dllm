@@ -9,7 +9,7 @@ def main():
     
     # Core Config Paths
     parser.add_argument("--run_config", 
-                        default="scripts/train_configs/llada_sft.yaml",
+                        default="scripts/train_configs/lora_baseline.yaml",
                         help="Path to training/wandb configuration YAML")
     parser.add_argument("--slurm_config", 
                         default="scripts/slurm_configs/default.yaml",
@@ -70,6 +70,7 @@ def main():
         f"export WANDB_NAME=\"{wb.get('name', 'unnamed')}\"",
         f"export WANDB_RUN_GROUP=\"{wb.get('group', 'default')}\"",
         f"export WANDB_TAGS=\"{','.join(wb.get('tags', []))}\"",
+        f"export WANDB_PROJECT=\"{os.getenv('WANDB_PROJECT', 'BPTT-llada')}\"",
         "export WANDB_INIT_TIMEOUT=300",
         "export WANDB_DEBUG=false",
         "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1"
@@ -78,6 +79,14 @@ def main():
     # 4. Prepare Training Command
     training = run_cfg.get("training", {})
     script_path = training.pop("script_path", "examples/llada/sft.py")
+    
+    # 4a. Automatic Output Directory Construction from WandB
+    if "output_dir" not in training:
+        group = wb.get('group', 'default')
+        name = wb.get('name', 'unnamed')
+        # Format: .models/{group}/{name}
+        training["output_dir"] = f".models/{group}/{name}"
+        print(f"📂 Automatic output_dir: {training['output_dir']}")
     
     # Combine training params from YAML and CLI extra args
     train_flags = []
