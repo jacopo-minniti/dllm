@@ -108,7 +108,12 @@ class BaseEvalHarness(LM):
             self.device = torch.device(device)
             self.accelerator = None
 
-        self.batch_size = int(kwargs.get("batch_size", eval_config.batch_size))
+        batch_size = kwargs.get("batch_size", eval_config.batch_size)
+        if batch_size == "auto":
+            print("Warning: batch_size='auto' not yet supported for dLLM custom harness. Falling back to 1.")
+            self.batch_size = 1
+        else:
+            self.batch_size = int(batch_size)
 
     @property
     def rank(self) -> int:
