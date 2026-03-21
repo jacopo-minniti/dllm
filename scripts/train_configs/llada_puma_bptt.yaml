@@ -23,4 +23,4 @@ training:
   save_steps: 100
   eval_steps: 100
   bf16: true
-  seed: 1234
+  seed: 0

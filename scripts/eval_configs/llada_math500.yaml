@@ -3,9 +3,9 @@ evaluation:
   script_path: "dllm/pipelines/llada/eval.py"
   model: "llada"
   tasks: "hendrycks_math500"
-  batch_size: 4
+  batch_size: 8
   device: "cuda"
-  output_path: "./eval_results/llada_math500"
+  output_path: "./evals/llada_math500"
   apply_chat_template: true
   num_fewshot: 0
   log_samples: true
@@ -22,6 +22,6 @@ evaluation:
   # WandB tracking details (passed as comma-separated key=val)
   # Project/Entity are picked up from environment variables (.env)
   wandb_args:
-    name: "llada-math500-eval"
-    group: "eval"
-    tags: "baseline,math"
+    name: "0"
+    group: "llada-lora-math500"
+    tags: "baseline,eval"
