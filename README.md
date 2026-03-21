@@ -1,6 +1,8 @@
+**Note**: README has been updated for our custom interventions and wiring!
+
 # dLLM: Simple Diffusion Language Modeling
 
-dLLM is a library for training and evaluating diffusion language models (e.g., LLaDA, Dream) using aunified and scalable pipeline.
+dLLM is a library for training and evaluating diffusion language models using aunified and scalable pipeline.
 
 ## 🚀 Quick Setup
 
