@@ -1,0 +1,12 @@
+# Slurm Resource Requests
+job_name: "llada-eval"
+nodes: 1
+gpus_per_node: "l40s:1"
+time: "00:30:00"
+mem: "20G"
+cpus_per_task: 16
+ntasks_per_node: 1
+output: "./.logs/%x-%j.out"
+error: "./.logs/%x-%j.err"
+requeue: true
+working_dir: "/scratch/jacopo04/dllm"

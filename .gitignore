@@ -138,3 +138,4 @@ dmypy.json
 /.logs/
 /.models/
 .generated_train.sh
+.generated_eval.sh

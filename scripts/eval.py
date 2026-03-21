@@ -101,6 +101,7 @@ def main():
     # Get working directory
     working_dir = slurm_cfg.get("working_dir", os.getcwd())
 
+    # FOR NOW WE FORCE NODES TO BE 1 AS LM-EVAL-HARNESS MAY HAVE PROBLEMS
     # 4. Generate the Slurm Bash Script
     bash_script = f"""{chr(10).join(slurm_directives)}
 set -e
@@ -126,7 +127,7 @@ export PYTHONUNBUFFERED=1
 export NCCL_DEBUG=INFO
 
 # ===== Scale Calculation =====
-NUM_NODES=${{SLURM_NNODES:-1}}
+NUM_NODES=1
 GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\\n' | wc -l)
 WORLD_SIZE=$((NUM_NODES * GPUS_PER_NODE))
 MASTER_ADDR=$(scontrol show hostnames "${{SLURM_JOB_NODELIST:-localhost}}" | head -n 1)
@@ -141,7 +142,7 @@ fi
 echo "Launching Evaluation: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_ADDR:$MASTER_PORT"
 
 # ===== Execution =====
-srun --ntasks-per-node=1 --nodes="${{{NUM_NODES}}}" bash -c "accelerate launch \\
+srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch \\
   --config_file \"{acc_config}\" \\
   --num_machines \"${{NUM_NODES}}\" \\
   --num_processes \"${{WORLD_SIZE}}\" \\
