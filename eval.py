@@ -13,14 +13,14 @@ def main():
     
     # Core Config Paths
     parser.add_argument("--run_config", 
-                        default="scripts/eval_configs/llada_math500.yaml",
+                        default="configs/eval/llada_math500.yaml",
                         help="Path to evaluation configuration YAML")
     parser.add_argument("--slurm_config", 
-                        default="scripts/slurm_configs/default.yaml",
+                        default="configs/slurm/default.yaml",
                         help="Path to Slurm resource configuration YAML")
     parser.add_argument("--accelerate_config", 
                         default="ddp", 
-                        help="Name of accelerate config (located in scripts/accelerate_configs/)")
+                        help="Name of accelerate config (located in configs/accelerate/)")
     
     # Collect remaining args to pass directly to the eval script
     args, extra_args = parser.parse_known_args()
@@ -109,7 +109,7 @@ def main():
     # Handle accelerate config path
     acc_config = args.accelerate_config
     if not acc_config.endswith(".yaml"):
-        acc_config = f"scripts/accelerate_configs/{acc_config}.yaml"
+        acc_config = f"configs/accelerate/{acc_config}.yaml"
 
     # Get working directory
     working_dir = slurm_cfg.get("working_dir", os.getcwd())

@@ -30,23 +30,23 @@ mkdir .logs
 We use a central launching system that combines YAML configurations with Slurm submission.
 
 ### Training
-Configurations are stored in `scripts/train_configs/`.
+Configurations are stored in `configs/train/`.
 
 ```bash
-# Launch a training run (e.g., LLaDA LoRA SFT)
-python scripts/train.py --run_config scripts/train_configs/baseline.yaml
+# Launch a training run (e.g., LLaDA LoRA Baseline)
+python train.py --run_config configs/train/lora_baseline.yaml
 ```
 
 ### Evaluation
-Configurations are stored in `scripts/eval_configs/`. We use `lm-evaluation-harness` for benchmarks.
+Configurations are stored in `configs/eval/`. We use `lm-evaluation-harness` for benchmarks.
 
 ```bash
 # Launch evaluation (e.g., MATH500)
-python scripts/eval.py --run_config scripts/eval_configs/baseline.yaml
+python eval.py --run_config configs/eval/llada_math500.yaml
 ```
 
 > [!TIP]
-> Both scripts use `scripts/slurm_configs/default.yaml` for job resource requests (nodes, GPUs, time, etc.). You can also pass `--resume_from_checkpoint True` to `train.py` to pick up where a job left off.
+> Both scripts use `configs/slurm/default.yaml` for job resource requests (nodes, GPUs, time, etc.). You can also pass `--resume_from_checkpoint True` to `train.py` to pick up where a job left off.
 
 ## 📊 Monitoring (WandB)
 
@@ -68,5 +68,6 @@ Our implementation specialized LLaDA for improved convergence and stable instruc
 ### Code Organization
 - `dllm/pipelines/llada/models/modeling_llada.py`: Core architecture, including PUMA and BPTT logic.
 - `dllm/core/trainers/mdlm.py`: The `MDLMTrainer` which handles the diffusion loss calculations.
-- `scripts/`: Central entry points for automated Slurm job generation.
+- `configs/`: Central YAML configurations for automated Slurm job generation.
+- `train.py` / `eval.py`: Top-level launchers for the pipeline.
 - `examples/llada/sft.py`: The supervised fine-tuning loop.

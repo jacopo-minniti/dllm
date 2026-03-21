@@ -9,14 +9,14 @@ def main():
     
     # Core Config Paths
     parser.add_argument("--run_config", 
-                        default="scripts/train_configs/lora_baseline.yaml",
+                        default="configs/train/lora_baseline.yaml",
                         help="Path to training/wandb configuration YAML")
     parser.add_argument("--slurm_config", 
-                        default="scripts/slurm_configs/default.yaml",
+                        default="configs/slurm/default.yaml",
                         help="Path to Slurm resource configuration YAML")
     parser.add_argument("--accelerate_config", 
                         default="fsdp", 
-                        help="Name of accelerate config (located in scripts/accelerate_configs/)")
+                        help="Name of accelerate config (located in configs/accelerate/)")
     
     # Collect remaining args to pass directly to training script
     args, extra_args = parser.parse_known_args()
@@ -101,7 +101,7 @@ def main():
     # Handle accelerate config path
     acc_config = args.accelerate_config
     if not acc_config.endswith(".yaml"):
-        acc_config = f"scripts/accelerate_configs/{acc_config}.yaml"
+        acc_config = f"configs/accelerate/{acc_config}.yaml"
 
     # Get working directory for script activation
     working_dir = slurm_cfg.get("working_dir", os.getcwd())
