@@ -76,6 +76,20 @@ def get_model(
     # Optionally train with lora
     model = load_peft(model, model_args)
 
+    if getattr(model_args, "lora", False) and not load_in_4bit:
+        # Avoid the error: element 0 of tensors does not require grad and does not have a grad_fn
+        # This is needed because input_ids (integers) do not require gradients, and
+        # torch's gradient checkpointing (use_reentrant=True) requires at least one input with requires_grad=True
+        # to record the graph of operations in the checkpointed block.
+        # This is already handled by prepare_model_for_kbit_training, but not for regular LoRA.
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+        elif hasattr(model, "get_input_embeddings"):
+            # fallback
+            def make_inputs_require_grad(module, input, output):
+                output.requires_grad_(True)
+            model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
+
     return model
 
 

@@ -1085,6 +1085,9 @@ class LLaDAPreTrainedModel(PreTrainedModel):
                 module.set_activation_checkpointing(strategy)
                 break
 
+        if enable:
+            self.enable_input_require_grads()
+
 
 class LLaDAModel(LLaDAPreTrainedModel):
     def __init__(self, config: LLaDAConfig | ModelConfig, init_params: bool = True):
@@ -1185,6 +1188,12 @@ class LLaDAModel(LLaDAPreTrainedModel):
             return _non_meta_init_device(self.config)
         else:
             return device
+
+    def get_input_embeddings(self) -> torch.nn.Module:
+        return self.transformer.wte
+
+    def set_input_embeddings(self, value: torch.nn.Module):
+        self.transformer.wte = value
 
     def reset_parameters(self):
         log.info("Initializing model parameters...")
