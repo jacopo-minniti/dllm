@@ -1,0 +1,30 @@
+# WandB Metadata
+wandb:
+  name: "lr2e-5_s42"
+  group: "llada-lora-puma-bptt"
+  tags: ["intervention"]
+
+# Training Hyperparameters (Aligned with baseline)
+training:
+  script_path: "examples/llada/sft.py"
+  loss_type: "puma_bptt"
+  lora: true
+  num_train_epochs: 4
+  learning_rate: 2e-5
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 1
+  dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:10000]"
+  lr_scheduler_type: "linear"
+  warmup_ratio: 0.1
+  logging_steps: 10
+  save_steps: 500
+  eval_steps: 500
+  bf16: true
+  gradient_checkpointing: true
+  seed: 42
+  save_only_model: false
+  ddp_find_unused_parameters: false
+  
+  # Intervention Settings
+  puma_threshold: 0.15
+  bptt_steps: 2
