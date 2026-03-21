@@ -1,6 +1,6 @@
 # WandB Metadata
 wandb:
-  name: "test"
+  name: "0"
   group: "llada-lora-tulu3"
   tags: ["baseline"]
 
@@ -9,16 +9,21 @@ training:
   script_path: "examples/llada/sft.py"
   loss_type: "mlm"
   lora: true
-  num_train_epochs: 4
+  num_train_epochs: 3
   learning_rate: 2e-5
   per_device_train_batch_size: 4
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 4
   dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:10000]"
   lr_scheduler_type: "cosine"
   warmup_ratio: 0.1
   logging_steps: 10
-  save_steps: 500
-  eval_steps: 500
+  save_steps: 2000
+  eval_steps: 1000
   bf16: true
   gradient_checkpointing: true
-  seed: 42
+  seed: 0
+  ddp_find_unused_parameters: false
+  save_only_model: false
+  output_dir: ".models/tulu3/llada-lora-baseline/"
+  # resume_from_checkpoint: ".models/LLaDA-8B-Base/my_experiment_name/checkpoint-500"
+
