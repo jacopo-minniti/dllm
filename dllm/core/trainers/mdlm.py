@@ -208,11 +208,13 @@ class MDLMTrainer(transformers.Trainer):
         else:
             # === New Interventions (PUMA / BPTT) ===
             if "puma" in self.args.loss_type:
-                # Use persistent streaming batch
-                if self.active_streaming_batch is None or self.active_streaming_batch.is_finished():
-                    # Initialize from new inputs
-                    inputs = self._preprocess_inputs(inputs)
-                    self.active_streaming_batch = StreamingBatch.from_batch(inputs, self.processing_class.mask_token_id)
+                # Use persistent row-wise streaming batch
+                if self.active_streaming_batch is None:
+                    self.active_streaming_batch = StreamingBatch()
+                
+                # Evict finished rows and fill with current dataloader input
+                inputs = self._preprocess_inputs(inputs)
+                self.active_streaming_batch.evict_and_fill(inputs, self.processing_class.mask_token_id)
                 
                 loss, outputs = self.loss_fn(model, self.active_streaming_batch)
             else:
