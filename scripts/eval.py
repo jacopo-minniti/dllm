@@ -4,12 +4,16 @@ import subprocess
 import os
 import sys
 
+def dict_to_arg_str(d, sep=","):
+    """Convert dict to 'key=val,key2=val2' format."""
+    return sep.join([f"{k}={v}" for k, v in d.items()])
+
 def main():
     parser = argparse.ArgumentParser(description="Central Evaluation Launcher for dLLM")
     
     # Core Config Paths
     parser.add_argument("--run_config", 
-                        default="scripts/eval_configs/baseline.yaml",
+                        default="scripts/eval_configs/llada_math500.yaml",
                         help="Path to evaluation configuration YAML")
     parser.add_argument("--slurm_config", 
                         default="scripts/slurm_configs/default.yaml",
@@ -77,12 +81,21 @@ def main():
     # Construct eval flags from YAML
     eval_flags = []
     
-    # We want to handle model_args carefully because it often contains commas
-    model_args = evaluation.pop("model_args", None)
-    if model_args:
-        eval_flags.append("--model_args")
-        eval_flags.append(f"\"{model_args}\"")
-        
+    # Handle dict-based args (model_args, wandb_args, gen_kwargs)
+    for key in ["model_args", "wandb_args", "gen_kwargs"]:
+        val = evaluation.pop(key, None)
+        if val:
+            if isinstance(val, dict):
+                val_str = dict_to_arg_str(val)
+                eval_flags.append(f"--{key} \"{val_str}\"")
+            else:
+                eval_flags.append(f"--{key} \"{val}\"")
+                
+    # Default: force samples to stdout via write_out for the .out log
+    if "write_out" not in evaluation:
+        eval_flags.append("--write_out")
+
+    # Add remaining flags
     for k, v in evaluation.items():
         if isinstance(v, bool):
             if v:
@@ -101,7 +114,6 @@ def main():
     # Get working directory
     working_dir = slurm_cfg.get("working_dir", os.getcwd())
 
-    # FOR NOW WE FORCE NODES TO BE 1 AS LM-EVAL-HARNESS MAY HAVE PROBLEMS
     # 4. Generate the Slurm Bash Script
     bash_script = f"""{chr(10).join(slurm_directives)}
 set -e
@@ -127,6 +139,7 @@ export PYTHONUNBUFFERED=1
 export NCCL_DEBUG=INFO
 
 # ===== Scale Calculation =====
+# Evaluation is forced to 1 node for stability
 NUM_NODES=1
 GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\\n' | wc -l)
 WORLD_SIZE=$((NUM_NODES * GPUS_PER_NODE))
@@ -154,9 +167,9 @@ srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch \\
 """
 
     # Write to a temporary file
-    # temp_script = ".generated_eval.sh"
-    # with open(temp_script, "w") as f:
-    #     f.write(bash_script)
+    temp_script = ".generated_eval.sh"
+    with open(temp_script, "w") as f:
+        f.write(bash_script)
     
     # Submit job
     os.makedirs(".logs", exist_ok=True)

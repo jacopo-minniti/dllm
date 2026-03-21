@@ -9,7 +9,7 @@ def main():
     
     # Core Config Paths
     parser.add_argument("--run_config", 
-                        default="scripts/train_configs/baseline.yaml",
+                        default="scripts/train_configs/llada_sft.yaml",
                         help="Path to training/wandb configuration YAML")
     parser.add_argument("--slurm_config", 
                         default="scripts/slurm_configs/default.yaml",
@@ -59,7 +59,6 @@ def main():
             elif v is False:
                 continue
             else:
-                # Use '=' for long flags, space for short flags (though we use long flags now)
                 if flag.startswith("--"):
                     slurm_directives.append(f"#SBATCH {flag}={v}")
                 else:
@@ -83,8 +82,11 @@ def main():
     # Combine training params from YAML and CLI extra args
     train_flags = []
     for k, v in training.items():
-        train_flags.append(f"--{k}")
-        train_flags.append(str(v))
+        if isinstance(v, bool):
+            if v: train_flags.append(f"--{k}")
+        else:
+            train_flags.append(f"--{k}")
+            train_flags.append(str(v))
     train_flags.extend(extra_args)
 
     # Handle accelerate config path
@@ -96,7 +98,6 @@ def main():
     working_dir = slurm_cfg.get("working_dir", os.getcwd())
 
     # 5. Generate the Slurm Bash Script
-    # Note: We use ${SLURM_JOB_ID:+$((...))} style or just basic math for port
     bash_script = f"""{chr(10).join(slurm_directives)}
 set -e
 
@@ -108,7 +109,7 @@ echo "Switched to: $(pwd)"
 module load slurm StdEnv/2023 python/3.11.5 cuda/12.6 cudnn
 module load gcc opencv arrow
 
-# Activate virtualenv - try absolute then relative
+# Activate virtualenv
 if [ -f "{working_dir}/.venv/bin/activate" ]; then
     source "{working_dir}/.venv/bin/activate"
 elif [ -f "./.venv/bin/activate" ]; then
@@ -143,8 +144,6 @@ fi
 echo "Launching: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_ADDR:$MASTER_PORT (via srun)"
 
 # ===== Execution =====
-# We use srun with --ntasks-per-node=1 to start one 'accelerate launch' per node.
-# The machine_rank is set to \$SLURM_NODEID (escaped so it's expanded by srun's shell instance).
 srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch \\
   --config_file \"{acc_config}\" \\
   --num_machines \"${{NUM_NODES}}\" \\
@@ -157,13 +156,13 @@ srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch \\
 """
 
     # Write to a temporary file
-    # temp_script = ".generated_train.sh"
-    # with open(temp_script, "w") as f:
-    #     f.write(bash_script)
+    temp_script = ".generated_train.sh"
+    with open(temp_script, "w") as f:
+        f.write(bash_script)
     
     # Submit job
     os.makedirs(".logs", exist_ok=True)
-    print(f"🚀 Submitting job via sbatch config: {args.run_config}")
+    print(f"🚀 Submitting job via configuration: {args.run_config}")
     result = subprocess.run(["sbatch", temp_script])
     
     if result.returncode == 0:
