@@ -1,0 +1,12 @@
+# Evaluation Configuration
+evaluation:
+  script_path: "dllm/pipelines/llada/eval.py"
+  model: "llada"
+  # Replace with your checkpoint path, e.g., pretrained=.models/LLaDA-8B-Base/checkpoint-500
+  model_args: "pretrained=GSAI-ML/LLaDA-8B-Base,dtype=bfloat16,max_new_tokens=1024,steps=1024,block_size=1024"
+  tasks: "hendrycks_math500"
+  batch_size: "auto"
+  device: "cuda"
+  output_path: "./eval_results/baseline"
+  apply_chat_template: true
+  num_fewshot: 0
