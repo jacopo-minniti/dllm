@@ -175,7 +175,7 @@ def activation_checkpoint_function(cfg: ModelConfig):
     return partial(
         checkpoint,
         preserve_rng_state=preserve_rng_state,
-        use_reentrant=True,
+        use_reentrant=False,
     )
 
 
