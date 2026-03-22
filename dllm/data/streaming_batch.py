@@ -41,6 +41,18 @@ class StreamingBatch:
         # Initially, nothing is ready to evict (we just started)
         self.ready_to_evict = torch.zeros(self.capacity, dtype=torch.bool, device=device)
 
+    def _prepare_tensor(self, t: torch.Tensor, target_len: int, pad_value: Any) -> torch.Tensor:
+        """Pad or truncate a tensor to the target sequence length."""
+        curr_len = t.shape[-1]
+        if curr_len == target_len:
+            return t
+        if curr_len < target_len:
+            # Pad on the right (last dimension)
+            return torch.nn.functional.pad(t, (0, target_len - curr_len), value=pad_value)
+        else:
+            # Truncate
+            return t[..., :target_len]
+
     def evict_and_fill(self, batch: Dict[str, torch.Tensor], mask_token_id: int):
         """
         Replaces individual rows that have finished unmasking (ready_to_evict=True)
@@ -60,10 +72,11 @@ class StreamingBatch:
 
             # Fill selected slots from the incoming batch
             target_slots = evict_idxs[:num_to_fill]
-            source_samples = torch.arange(num_to_fill, device=batch["input_ids"].device)
-
-            new_input_ids = batch["input_ids"][source_samples].clone()
-            new_labels = batch["labels"][source_samples].clone()
+            
+            # Prepare new tensors with correct sequence length
+            # Note: input_ids will be masked below, so pad value here is temporary
+            new_input_ids = self._prepare_tensor(batch["input_ids"][:num_to_fill], self.seq_len, pad_value=0)
+            new_labels = self._prepare_tensor(batch["labels"][:num_to_fill], self.seq_len, pad_value=-100)
             
             maskable_mask = new_labels != -100
             new_input_ids[maskable_mask] = mask_token_id
@@ -72,13 +85,15 @@ class StreamingBatch:
             self.labels[target_slots] = new_labels
             self.masked_mutable[target_slots] = maskable_mask
             
-            # Reset metadata and latent state for these slots
+            # Reset latent state for these slots
             if self.h_t is not None:
-                self.h_t[target_slots] = 0.0 # Reset hidden state for new sequence
+                self.h_t[target_slots] = 0.0
             
             for k, v in batch.items():
                 if k not in ["input_ids", "labels"] and k in self.metadata and isinstance(v, torch.Tensor):
-                    self.metadata[k][target_slots] = v[source_samples].clone()
+                    # Guess logical pad value: 0 for attention_mask, etc.
+                    pad_val = 0 if "mask" in k.lower() else 0
+                    self.metadata[k][target_slots] = self._prepare_tensor(v[:num_to_fill], self.seq_len, pad_value=pad_val)
 
             # These slots are no longer ready to evict (they just started)
             self.ready_to_evict[target_slots] = False
