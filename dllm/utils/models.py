@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 
 import accelerate
@@ -62,12 +63,31 @@ def get_model(
         "config": config,
     }
 
+    # Detect if we are loading a PEFT checkpoint
+    is_peft = False
+    if model_name_or_path and os.path.isdir(model_name_or_path):
+        if os.path.exists(os.path.join(model_name_or_path, "adapter_config.json")):
+            is_peft = True
+            from peft import PeftConfig
+            peft_config = PeftConfig.from_pretrained(model_name_or_path)
+            base_model_path = peft_config.base_model_name_or_path
+            print_main(f"ℹ️ Detected PEFT checkpoint. Loading base model: {base_model_path}")
+        else:
+            base_model_path = model_name_or_path
+    else:
+        base_model_path = model_name_or_path
+
     try:
         model = transformers.AutoModelForMaskedLM.from_pretrained(
-            model_name_or_path, **params
+            base_model_path, **params
         )
     except Exception:
-        model = transformers.AutoModel.from_pretrained(model_name_or_path, **params)
+        model = transformers.AutoModel.from_pretrained(base_model_path, **params)
+
+    if is_peft:
+        print_main(f"ℹ️ Loading PEFT adapter from: {model_name_or_path}")
+        from peft import PeftModel
+        model = PeftModel.from_pretrained(model, model_name_or_path)
 
     # --- if quantized, prepare for LoRA / QLoRA training ---
     if load_in_4bit and quant_config is not None:
