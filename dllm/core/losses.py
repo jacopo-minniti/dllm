@@ -56,12 +56,15 @@ class PumaLoss(nn.Module):
         loss = F.cross_entropy(
             logits.transpose(1, 2),
             labels,
-            reduction="none"
+            reduction="none",
+            ignore_index=-100
         )
-        loss = (loss * masked_mask.float()).sum() / masked_mask.float().sum().clamp_min(1)
+        # Normalize by maskable tokens to match baseline gradient scale
+        loss = loss.sum() / maskable_mask.float().sum().clamp_min(1)
         
         # Update streaming batch (On-policy unmasking)
-        streaming_batch.update(logits, threshold=self.threshold, h_s=h_s)
+        # We DETACH h_s here to avoid cross-training-step BPTT unless explicitly doing BPTT
+        streaming_batch.update(logits, threshold=self.threshold, h_s=h_s.detach() if h_s is not None else None)
         
         return loss, outputs
 
@@ -126,9 +129,10 @@ class LoopholingBPTTPumaLoss(nn.Module):
         total_loss = 0
         final_outputs = None
         
+        # In PUMA BPTT, we unroll num_steps on the same buffer
         for t in range(self.num_steps):
             batch = streaming_batch.get_batch()
-            input_ids = batch["input_ids"]
+            input_ids = batch["input_ids"].clone() # Clone to avoid in-place issues
             labels = batch["labels"]
             attention_mask = batch.get("attention_mask")
             h_t = batch.get("h_t")
@@ -139,22 +143,26 @@ class LoopholingBPTTPumaLoss(nn.Module):
             h_s = getattr(outputs, "h_s", None)
             final_outputs = outputs
             
-            # Loss at step t
             maskable_mask = labels != -100
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
             
             loss_t = F.cross_entropy(
                 logits.transpose(1, 2),
                 labels,
-                reduction="none"
+                reduction="none",
+                ignore_index=-100
             )
-            loss_t = (loss_t * masked_mask.float()).sum() / masked_mask.float().sum().clamp_min(1)
+            # Use consistent normalization
+            loss_t = loss_t.sum() / maskable_mask.float().sum().clamp_min(1)
             total_loss += loss_t
             
-            # Update streaming batch (On-policy unmasking)
+            # Update streaming batch with the new state (On-policy unmasking)
+            # Between unrolls in the SAME call, we keep gradients in h_s
+            # But the LAST step should detach when storing for the NEXT call (handled by MDLMTrainer or update)
+            # Actually, update already handles persistence.
+            # For BPTT, we want gradients to flow through h_s into the next t in THIS loop.
             streaming_batch.update(logits, threshold=self.threshold, h_s=h_s)
             
-            # If the batch is finished, we can break early
             if streaming_batch.is_finished():
                 break
                 

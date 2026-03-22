@@ -19,27 +19,39 @@ class StreamingBatch:
         self.capacity: int = 0
         self.seq_len: int = 0
 
-    def initialize(self, batch: Dict[str, torch.Tensor], mask_token_id: int):
+    def initialize(self, batch: Dict[str, torch.Tensor], mask_token_id: int, capacity: Optional[int] = None):
         """
         Cold start: Initialize storage headers from the first batch and prime it.
         """
-        self.capacity, self.seq_len = batch["input_ids"].shape
+        batch_size, self.seq_len = batch["input_ids"].shape
+        self.capacity = capacity if capacity is not None else batch_size
         device = batch["input_ids"].device
         
-        self.input_ids = batch["input_ids"].clone()
-        self.labels = batch["labels"].clone()
-        
-        # In PUMA initialization, we start with 100% masks for maskable tokens
-        maskable_mask = self.labels != -100
-        self.input_ids[maskable_mask] = mask_token_id
-        
-        self.masked_mutable = maskable_mask
+        # Initialize storage with capacity
+        self.input_ids = torch.full((self.capacity, self.seq_len), mask_token_id, dtype=batch["input_ids"].dtype, device=device)
+        self.labels = torch.full((self.capacity, self.seq_len), -100, dtype=batch["input_ids"].dtype, device=device)
+        self.masked_mutable = torch.zeros((self.capacity, self.seq_len), dtype=torch.bool, device=device)
         self.h_t = None
-        self.metadata = {k: v.clone() if isinstance(v, torch.Tensor) else v 
-                         for k, v in batch.items() if k not in ["input_ids", "labels"]}
         
-        # Initially, nothing is ready to evict (we just started)
-        self.ready_to_evict = torch.zeros(self.capacity, dtype=torch.bool, device=device)
+        # Fill the first slots
+        num_to_fill = min(batch_size, self.capacity)
+        self.input_ids[:num_to_fill] = batch["input_ids"][:num_to_fill].clone()
+        self.labels[:num_to_fill] = batch["labels"][:num_to_fill].clone()
+        
+        maskable_mask = self.labels[:num_to_fill] != -100
+        self.input_ids[:num_to_fill][maskable_mask] = mask_token_id
+        self.masked_mutable[:num_to_fill] = maskable_mask
+        
+        self.metadata = {}
+        for k, v in batch.items():
+            if k not in ["input_ids", "labels"] and isinstance(v, torch.Tensor):
+                pad_val = 0 if "mask" in k.lower() else 0
+                self.metadata[k] = torch.full((self.capacity, self.seq_len), pad_val, dtype=v.dtype, device=device)
+                self.metadata[k][:num_to_fill] = v[:num_to_fill].clone()
+
+        # ALL slots are ready to evict EXCEPT the ones we just filled
+        self.ready_to_evict = torch.ones(self.capacity, dtype=torch.bool, device=device)
+        self.ready_to_evict[:num_to_fill] = False
 
     def _prepare_tensor(self, t: torch.Tensor, target_len: int, pad_value: Any) -> torch.Tensor:
         """Pad or truncate a tensor to the target sequence length."""
@@ -53,13 +65,13 @@ class StreamingBatch:
             # Truncate
             return t[..., :target_len]
 
-    def evict_and_fill(self, batch: Dict[str, torch.Tensor], mask_token_id: int):
+    def evict_and_fill(self, batch: Dict[str, torch.Tensor], mask_token_id: int, capacity: Optional[int] = None):
         """
         Replaces individual rows that have finished unmasking (ready_to_evict=True)
         with new ground-truth samples from the incoming batch.
         """
         if self.input_ids is None:
-            self.initialize(batch, mask_token_id)
+            self.initialize(batch, mask_token_id, capacity=capacity)
             return self.capacity
 
         with torch.no_grad():

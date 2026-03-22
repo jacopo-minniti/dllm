@@ -150,6 +150,11 @@ def train():
             elif resume_checkpoint.lower() == "false":
                 resume_checkpoint = None
 
+        if resume_checkpoint:
+            logger.info(f"Resuming training from checkpoint: {resume_checkpoint}")
+        else:
+            logger.info("Starting training from scratch.")
+
         trainer.train(resume_from_checkpoint=resume_checkpoint)
         trainer.save_model(os.path.join(training_args.output_dir, "checkpoint-final"))
         trainer.processing_class.save_pretrained(

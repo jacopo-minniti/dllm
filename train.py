@@ -88,6 +88,12 @@ def main():
         training["output_dir"] = f".models/{group}/{name}"
         print(f"📂 Automatic output_dir: {training['output_dir']}")
     
+    # 4b. Auto-resume logic
+    if os.path.exists(training["output_dir"]) and any(d.startswith("checkpoint-") for d in os.listdir(training["output_dir"])):
+        if "resume_from_checkpoint" not in training:
+            training["resume_from_checkpoint"] = "True"
+            print(f"🔄 Checkpoint found in {training['output_dir']}. Auto-resuming...")
+    
     # Combine training params from YAML and CLI extra args
     train_flags = []
     for k, v in training.items():

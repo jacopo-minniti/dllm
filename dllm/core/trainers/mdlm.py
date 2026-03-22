@@ -176,33 +176,36 @@ class MDLMTrainer(transformers.Trainer):
             )
 
             outputs = model(input_ids=noised_input_ids, attention_mask=attention_mask)
-            outputs = self._postprocess_outputs(outputs)
             logits = outputs.logits
-
-            loss_weights = self._compute_loss_weights(
-                t=t, inputs=inputs, masked_mask=masked_mask
-            )
-
             token_nll = F.cross_entropy(
                 logits.transpose(1, 2),
                 input_ids,
                 reduction="none",
-            )
-            token_nll = token_nll * loss_weights * masked_mask.to(token_nll.dtype)
-
+            ).detach()
+            
             self.meter.update(
                 split="train" if model.training else "eval",
-                value=token_nll.detach(),
+                value=token_nll * masked_mask.to(token_nll.dtype),
                 weight=maskable_mask.to(dtype=logits.dtype).detach(),
             )
 
+            # We need the non-detached version for the loss
+            token_nll_orig = F.cross_entropy(
+                logits.transpose(1, 2),
+                input_ids,
+                reduction="none",
+            )
+            
+            loss_weights = self._compute_loss_weights(
+                t=t, inputs=inputs, masked_mask=masked_mask
+            ) 
+            
             if self.loss_norm_type == "token":
-                token_nll /= maskable_mask.sum().clamp_min(1)
+                loss = (token_nll_orig * loss_weights * masked_mask.to(token_nll_orig.dtype)).sum() / maskable_mask.sum().clamp_min(1)
             elif self.loss_norm_type == "sequence":
-                token_nll /= maskable_mask.sum(-1, keepdim=True).clamp_min(1) * b
+                loss = ((token_nll_orig * loss_weights * masked_mask.to(token_nll_orig.dtype)).sum(-1) / maskable_mask.sum(-1).clamp_min(1)).mean()
             elif self.loss_norm_type == "batch":
-                token_nll /= b
-            loss = token_nll.sum()
+                loss = (token_nll_orig * loss_weights * masked_mask.to(token_nll_orig.dtype)).sum() / b
             return (loss, outputs) if return_outputs else loss
 
         else:
@@ -213,14 +216,45 @@ class MDLMTrainer(transformers.Trainer):
                     self.active_streaming_batch = StreamingBatch()
                 
                 # Evict finished rows and fill with current dataloader input
+                # Capacity should be batch_size * gradient_accumulation_steps to avoid discarding data
+                capacity = self.args.per_device_train_batch_size * self.args.gradient_accumulation_steps
                 inputs = self._preprocess_inputs(inputs)
-                self.active_streaming_batch.evict_and_fill(inputs, self.processing_class.mask_token_id)
+                self.active_streaming_batch.evict_and_fill(
+                    inputs, 
+                    self.processing_class.mask_token_id,
+                    capacity=capacity
+                )
                 
                 loss, outputs = self.loss_fn(model, self.active_streaming_batch)
+                # Meter update
+                with torch.no_grad():
+                    batch = self.active_streaming_batch.get_batch()
+                    m_logits = outputs.logits
+                    m_labels = batch["labels"]
+                    m_input_ids = batch["input_ids"]
+                    m_maskable = m_labels != -100
+                    m_masked = (m_input_ids == self.processing_class.mask_token_id) & m_maskable
+                    m_nll = F.cross_entropy(m_logits.transpose(1, 2), m_labels, reduction="none", ignore_index=-100)
+                    self.meter.update(
+                        split="train" if model.training else "eval",
+                        value=m_nll * m_masked.to(m_nll.dtype),
+                        weight=m_maskable.to(dtype=m_logits.dtype)
+                    )
             else:
                 # Standard BPTT (step-wise unroll without persistence)
                 inputs = self._preprocess_inputs(inputs)
                 loss, outputs = self.loss_fn(model, inputs)
+                # Meter update
+                with torch.no_grad():
+                    m_logits = outputs.logits
+                    m_labels = inputs["labels"]
+                    m_maskable = m_labels != -100
+                    m_nll = F.cross_entropy(m_logits.transpose(1, 2), m_labels, reduction="none", ignore_index=-100)
+                    self.meter.update(
+                        split="train" if model.training else "eval",
+                        value=m_nll,
+                        weight=m_maskable.to(dtype=m_logits.dtype)
+                    )
 
             # Note: Meters update for new losses might need specialized logic if needed,
             # but for now we follow the general trainer flow.
