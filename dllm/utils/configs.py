@@ -14,6 +14,7 @@ class ModelArguments:
     dtype: str = "bfloat16"
     load_in_4bit: bool = False
     attn_implementation: str = None
+    flash_attention: bool = False
     # --- fold PEFT args here ---
     lora: bool = False
     target_modules: str = "all-linear"
