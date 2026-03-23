@@ -15,9 +15,9 @@ evaluation:
   model_args:
     pretrained: ".models/llada-lora-tulu3/lr2e-5_s42/checkpoint-2000" # "GSAI-ML/LLaDA-8B-Base"
     dtype: "bfloat16"
-    max_new_tokens: 1024
-    steps: 1024
-    block_size: 1024
+    max_new_tokens: 2048
+    steps: 128
+    block_size: 2048
 
   # WandB tracking details (passed as comma-separated key=val)
   # Project/Entity are picked up from environment variables (.env)
