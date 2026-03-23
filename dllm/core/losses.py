@@ -32,10 +32,11 @@ class MLMLoss(nn.Module):
         return loss, outputs
 
 class PumaLoss(nn.Module):
-    def __init__(self, mask_token_id: int, threshold: float = 0.15):
+    def __init__(self, mask_token_id: int, threshold: float = 0.15, confidence_type: str = "top_prob"):
         super().__init__()
         self.mask_token_id = mask_token_id
         self.threshold = threshold
+        self.confidence_type = confidence_type
 
     def forward(self, model, streaming_batch, slots: Optional[torch.Tensor] = None, **kwargs):
         batch = streaming_batch.get_batch(slots=slots)
@@ -51,6 +52,7 @@ class PumaLoss(nn.Module):
         
         # Loss calculation (on selected slots)
         maskable_mask = labels != -100
+        masked_mask = (input_ids == self.mask_token_id) & maskable_mask
         
         loss = F.cross_entropy(
             logits.transpose(1, 2),
@@ -58,11 +60,17 @@ class PumaLoss(nn.Module):
             reduction="none",
             ignore_index=-100
         )
-        # Normalize by maskable tokens to match baseline gradient scale
-        loss = loss.sum() / maskable_mask.float().sum().clamp_min(1)
+        # Fix average: Normalize by CURRENTLY masked tokens to match original repo
+        loss = loss.sum() / masked_mask.float().sum().clamp_min(1)
         
         # Update streaming batch (On-policy unmasking) - only for these slots
-        streaming_batch.update(logits, slots=slots, threshold=self.threshold, h_s=h_s.detach() if h_s is not None else None)
+        streaming_batch.update(
+            logits, 
+            slots=slots, 
+            threshold=self.threshold, 
+            confidence_type=self.confidence_type,
+            h_s=h_s.detach() if h_s is not None else None
+        )
         
         return loss, outputs
 
@@ -117,11 +125,13 @@ class LoopholingBPTTLoss(nn.Module):
         return total_loss / self.num_steps, outputs
 
 class LoopholingBPTTPumaLoss(nn.Module):
-    def __init__(self, mask_token_id: int, threshold: float = 0.15, num_steps: int = 2):
+    def __init__(self, mask_token_id: int, threshold: float = 0.15, num_steps: int = 2, confidence_type: str = "top_prob", weighted_ce: bool = False):
         super().__init__()
         self.mask_token_id = mask_token_id
         self.threshold = threshold
         self.num_steps = num_steps
+        self.confidence_type = confidence_type
+        self.weighted_ce = weighted_ce
 
     def forward(self, model, streaming_batch, **kwargs):
         total_loss = 0
@@ -150,16 +160,43 @@ class LoopholingBPTTPumaLoss(nn.Module):
                 reduction="none",
                 ignore_index=-100
             )
-            # Use consistent normalization
-            loss_t = loss_t.sum() / maskable_mask.float().sum().clamp_min(1)
+
+            if self.weighted_ce:
+                # Per-position weight: w_i = (1 + conf_i)
+                # Compute confidence using the selected metric
+                with torch.no_grad():
+                    probs = torch.softmax(logits, dim=-1)
+                    if self.confidence_type == "top_prob":
+                        conf = probs.max(dim=-1)[0]
+                    elif self.confidence_type == "prob_diff":
+                        top2_probs, _ = torch.topk(probs, k=2, dim=-1)
+                        conf = top2_probs[..., 0] - top2_probs[..., 1]
+                    elif self.confidence_type == "entropy":
+                        conf = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
+                    else:
+                        conf = probs.max(dim=-1)[0]
+                    
+                    weights = 1.0 + conf
+                
+                loss_t = loss_t * weights
+
+            # Fix average: Normalize by CURRENTLY masked tokens to match original repo
+            loss_t = loss_t.sum() / masked_mask.float().sum().clamp_min(1)
             total_loss += loss_t
             
             # Update streaming batch with the new state (On-policy unmasking)
-            # Between unrolls in the SAME call, we keep gradients in h_s
-            # But the LAST step should detach when storing for the NEXT call (handled by MDLMTrainer or update)
-            # Actually, update already handles persistence.
-            # For BPTT, we want gradients to flow through h_s into the next t in THIS loop.
-            streaming_batch.update(logits, threshold=self.threshold, h_s=h_s)
+            # Within the BPTT loop, we keep gradients in h_s.
+            # But the LAST step of the loop must detach if it is to be persisted for the NEXT global training call.
+            # We pass detach=True for the last step.
+            is_last_step = (t == self.num_steps - 1)
+            h_s_to_store = h_s.detach() if is_last_step else h_s
+            
+            streaming_batch.update(
+                logits, 
+                threshold=self.threshold, 
+                confidence_type=self.confidence_type,
+                h_s=h_s_to_store
+            )
             
             if streaming_batch.is_finished():
                 break

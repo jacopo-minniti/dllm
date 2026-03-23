@@ -65,52 +65,6 @@ class StreamingBatch:
             # Truncate
             return t[..., :target_len]
 
-    def evict_and_fill(self, batch: Dict[str, torch.Tensor], mask_token_id: int, capacity: Optional[int] = None):
-        """
-        Replaces individual rows that have finished unmasking (ready_to_evict=True)
-        with new ground-truth samples from the incoming batch.
-        """
-        if self.input_ids is None:
-            self.initialize(batch, mask_token_id, capacity=capacity)
-            return self.capacity
-
-        with torch.no_grad():
-            # Find which slots in our buffer are empty/ready
-            evict_idxs = torch.where(self.ready_to_evict)[0]
-            num_to_fill = min(len(evict_idxs), batch["input_ids"].shape[0])
-            
-            if num_to_fill == 0:
-                return 0
-
-            # Fill selected slots from the incoming batch
-            target_slots = evict_idxs[:num_to_fill]
-            
-            # Prepare new tensors with correct sequence length
-            # Note: input_ids will be masked below, so pad value here is temporary
-            new_input_ids = self._prepare_tensor(batch["input_ids"][:num_to_fill], self.seq_len, pad_value=0)
-            new_labels = self._prepare_tensor(batch["labels"][:num_to_fill], self.seq_len, pad_value=-100)
-            
-            maskable_mask = new_labels != -100
-            new_input_ids[maskable_mask] = mask_token_id
-            
-            self.input_ids[target_slots] = new_input_ids
-            self.labels[target_slots] = new_labels
-            self.masked_mutable[target_slots] = maskable_mask
-            
-            # Reset latent state for these slots
-            if self.h_t is not None:
-                self.h_t[target_slots] = 0.0
-            
-            for k, v in batch.items():
-                if k not in ["input_ids", "labels"] and k in self.metadata and isinstance(v, torch.Tensor):
-                    # Guess logical pad value: 0 for attention_mask, etc.
-                    pad_val = 0 if "mask" in k.lower() else 0
-                    self.metadata[k][target_slots] = self._prepare_tensor(v[:num_to_fill], self.seq_len, pad_value=pad_val)
-
-            # These slots are no longer ready to evict (they just started)
-            self.ready_to_evict[target_slots] = False
-            
-            return num_to_fill
 
     def get_batch(self, slots: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         """Returns the buffer contents, optionally filtered to specific slots."""
@@ -180,7 +134,7 @@ class StreamingBatch:
         perm = torch.randperm(len(not_ready), device=not_ready.device)
         return not_ready[perm[:count]]
 
-    def update(self, logits: torch.Tensor, threshold: float, slots: Optional[torch.Tensor] = None, h_s: Optional[torch.Tensor] = None):
+    def update(self, logits: torch.Tensor, threshold: float, confidence_type: str = "top_prob", slots: Optional[torch.Tensor] = None, h_s: Optional[torch.Tensor] = None):
         """
         Performs "On-Policy Unmasking" based on model confidence and updates eviction state.
         Only processes the specified slots.
@@ -190,8 +144,22 @@ class StreamingBatch:
 
         with torch.no_grad():
             probs = torch.softmax(logits, dim=-1)
-            max_probs, _ = probs.max(dim=-1)
-            uncertainty = 1.0 - max_probs
+            
+            if confidence_type == "top_prob":
+                max_probs, _ = probs.max(dim=-1)
+                uncertainty = 1.0 - max_probs
+            elif confidence_type == "prob_diff":
+                top2_probs, _ = torch.topk(probs, k=2, dim=-1)
+                conf = top2_probs[..., 0] - top2_probs[..., 1]
+                uncertainty = 1.0 - conf
+            elif confidence_type == "entropy":
+                # entropy = -sum(p * log(p))
+                # Normalized uncertainty: high entropy -> high uncertainty
+                ent = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
+                uncertainty = ent
+            else:
+                max_probs, _ = probs.max(dim=-1)
+                uncertainty = 1.0 - max_probs
             
             for k, i in enumerate(slots.tolist()):
                 u_i = uncertainty[k]

@@ -33,6 +33,8 @@ class MDLMConfig(TrainingArguments):
     loss_type: str = "mlm"  # "mlm", "puma", "bptt", "puma_bptt"
     puma_threshold: float = 0.15
     bptt_steps: int = 2
+    confidence_type: str = "top_prob" # "top_prob", "entropy", "prob_diff"
+    weighted_ce: bool = False
 
 
 class MDLMTrainer(transformers.Trainer):
@@ -66,9 +68,22 @@ class MDLMTrainer(transformers.Trainer):
         # Registry of loss functions
         self.loss_fns = {
             "mlm": MLMLoss(self.processing_class.mask_token_id),
-            "puma": PumaLoss(self.processing_class.mask_token_id, threshold=args.puma_threshold),
-            "bptt": LoopholingBPTTLoss(self.processing_class.mask_token_id, num_steps=args.bptt_steps),
-            "puma_bptt": LoopholingBPTTPumaLoss(self.processing_class.mask_token_id, threshold=args.puma_threshold, num_steps=args.bptt_steps),
+            "puma": PumaLoss(
+                self.processing_class.mask_token_id, 
+                threshold=args.puma_threshold, 
+                confidence_type=args.confidence_type
+            ),
+            "bptt": LoopholingBPTTLoss(
+                self.processing_class.mask_token_id, 
+                num_steps=args.bptt_steps
+            ),
+            "puma_bptt": LoopholingBPTTPumaLoss(
+                self.processing_class.mask_token_id, 
+                threshold=args.puma_threshold, 
+                num_steps=args.bptt_steps,
+                confidence_type=args.confidence_type,
+                weighted_ce=args.weighted_ce
+            ),
         }
         self.loss_fn = self.loss_fns.get(args.loss_type, self.loss_fns["mlm"])
         self.active_streaming_batch = None

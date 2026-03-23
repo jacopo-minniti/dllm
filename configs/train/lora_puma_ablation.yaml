@@ -27,3 +27,5 @@ training:
   
   # PUMA-specific settings
   puma_threshold: 0.15
+  confidence_type: "top_prob"
+  weighted_ce: false
