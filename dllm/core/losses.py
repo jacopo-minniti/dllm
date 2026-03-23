@@ -21,8 +21,9 @@ class MLMLoss(nn.Module):
         
         loss = F.cross_entropy(
             logits.transpose(1, 2),
-            input_ids,
-            reduction="none"
+            labels,
+            reduction="none",
+            ignore_index=-100
         )
         
         # Only compute loss on masked tokens (that are maskable)
