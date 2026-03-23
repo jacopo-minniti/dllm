@@ -1090,12 +1090,8 @@ class LLaDAPreTrainedModel(PreTrainedModel):
 
 
 class LLaDAModel(LLaDAPreTrainedModel):
-    def __init__(self, config: LLaDAConfig | ModelConfig, init_params: bool = True, **kwargs):
-        super().__init__(config, **kwargs)
-        # Update flash_attention from kwargs if Transformers set it via attn_implementation
-        if "flash_attention" in kwargs:
-            self.config.flash_attention = kwargs["flash_attention"]
-        
+    def __init__(self, config: LLaDAConfig | ModelConfig, init_params: bool = True):
+        super().__init__(config)
         self.gradient_checkpointing: bool = False
         self.__cache = BufferCache()
 
@@ -1466,16 +1462,14 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
     # _no_split_modules = ["LLaDABlock", "LLaDASequentialBlock", "LLaDALlamaBlock"]
     _no_split_modules = ["LLaDALlamaBlock"]
 
-    def __init__(self, config: LLaDAConfig, model: Optional[LLaDAModel] = None, init_params: bool = False, **kwargs):
-        super().__init__(config, **kwargs)
+    def __init__(self, config: LLaDAConfig, model: Optional[LLaDAModel] = None, init_params: bool = False):
+        super().__init__(config)
 
         if not model:
             model_config = create_model_config_from_pretrained_config(config)
-            # Prioritize the flash_attention flag from the config/kwargs
-            fa = getattr(config, "flash_attention", False) or kwargs.get("flash_attention", False)
-            model_config.flash_attention = fa
+            # Initialize model (always on CPU to start with so we don't run out of GPU memory).
             model_config.init_device = "cuda"
-            self.model = LLaDAModel(model_config, init_params=init_params, **kwargs)
+            self.model = LLaDAModel(model_config, init_params=init_params)
         else:
             self.model = model
 

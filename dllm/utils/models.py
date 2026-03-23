@@ -63,16 +63,6 @@ def get_model(
         "config": config,
     }
 
-    # Bridge attn_implementation to flash_attention if model_args suggests it
-    # This is needed for models like LLaDA that use a custom flash_attention boolean.
-    is_fa2 = (attn_implementation == "flash_attention_2") or getattr(model_args, "flash_attention", False)
-    if is_fa2:
-        if params["config"] is not None:
-             params["config"].flash_attention = True
-        # If config is None, transformers will load it from the checkpoint.
-        # AutoModel.from_pretrained will pass extra kwargs to the config/model.
-        params["flash_attention"] = True
-
     # Detect if we are loading a PEFT checkpoint
     is_peft = False
     if model_name_or_path and os.path.isdir(model_name_or_path):
