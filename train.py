@@ -35,6 +35,35 @@ def main():
     with open(args.slurm_config, 'r') as f:
         slurm_cfg = yaml.safe_load(f)
 
+    # 1b. Handle CLI Overwrites (Format: --slurm.key val or --training.key val)
+    remaining_extra_args = []
+    i = 0
+    while i < len(extra_args):
+        arg = extra_args[i]
+        if arg.startswith("--slurm.") or arg.startswith("--training."):
+            # handle --key=val case
+            if "=" in arg:
+                key_full, val = arg.split("=", 1)
+            else:
+                key_full = arg
+                val = extra_args[i+1] if i+1 < len(extra_args) else True
+                i += 1
+            
+            prefix, key = key_full.lstrip("-").split(".", 1)
+            
+            # Apply override
+            if prefix == "slurm":
+                slurm_cfg[key] = val
+                print(f"🔧 Overwriting Slurm config: {key} = {val}")
+            elif prefix == "training":
+                if "training" not in run_cfg: run_cfg["training"] = {}
+                run_cfg["training"][key] = val
+                print(f"🔧 Overwriting Training config: {key} = {val}")
+        else:
+            remaining_extra_args.append(arg)
+        i += 1
+    extra_args = remaining_extra_args
+
     # 2. Extract Slurm Directives
     slurm_directives = ["#!/bin/bash"]
     sbatch_map = {
