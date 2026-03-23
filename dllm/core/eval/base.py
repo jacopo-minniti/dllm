@@ -6,6 +6,7 @@ Pipeline-agnostic; no MDLM/Dream specifics.
 Run: Not runnable directly; use pipeline eval entrypoints (e.g. dllm.pipelines.llada.eval).
 """
 
+import os
 import dataclasses
 from dataclasses import dataclass
 
@@ -141,15 +142,45 @@ class BaseEvalHarness(LM):
         )
 
     # ── Unified generate_until scaffolding ────────────────────────────
-
     @torch.no_grad()
     def generate_until(self, requests: list[Instance]) -> list[str]:
-        out: list[str] = []
+        # Track if we have a checkpoint path to resume from
+        checkpoint_path = getattr(self.model_args, "eval_checkpoint", None)
+        processed_results = {}
+        
+        if checkpoint_path and os.path.exists(checkpoint_path):
+            import json
+            print(f"🔄 Resuming evaluation from checkpoint: {checkpoint_path}")
+            with open(checkpoint_path, "r") as f:
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                        processed_results[data["context"]] = data["answer"]
+                    except Exception:
+                        continue
+            print(f"✅ Loaded {len(processed_results)} existing results.")
 
+        out: list[str] = [None] * len(requests)
+        pending_indices = []
+        
+        for i, inst in enumerate(requests):
+            ctx = inst.args[0]
+            if ctx in processed_results:
+                out[i] = processed_results[ctx]
+            else:
+                pending_indices.append(i)
+        
+        if not pending_indices:
+            return out
+
+        # Process only pending requests
+        pending_requests = [requests[i] for i in pending_indices]
+        
         for batch_start in tqdm(
-            range(0, len(requests), self.batch_size), desc="Generating..."
+            range(0, len(pending_requests), self.batch_size), desc="Generating (Pending)..."
         ):
-            batch = requests[batch_start : batch_start + self.batch_size]
+            batch_idxs = pending_indices[batch_start : batch_start + self.batch_size]
+            batch = [requests[i] for i in batch_idxs]
             contexts, gen_kwargs_list = zip(*[inst.args for inst in batch])
 
             prompts = [
@@ -172,11 +203,24 @@ class BaseEvalHarness(LM):
                 [p.tolist() for p in prompts],
             )
 
-            for answer, gen_kwargs in zip(generated_answers, gen_kwargs_list):
+            # Post-process and checkpoint
+            new_saves = []
+            for j, (answer, gen_kwargs) in enumerate(zip(generated_answers, gen_kwargs_list)):
                 for stop_seq in gen_kwargs["until"]:
                     if stop_seq in answer:
                         answer = answer.split(stop_seq)[0]
-                out.append(answer)
+                
+                real_idx = batch_idxs[j]
+                out[real_idx] = answer
+                
+                if checkpoint_path:
+                    new_saves.append({"context": contexts[j], "answer": answer})
+
+            if checkpoint_path and new_saves:
+                import json
+                with open(checkpoint_path, "a") as f:
+                    for item in new_saves:
+                        f.write(json.dumps(item) + "\n")
 
             if self.accelerator is not None:
                 self.accelerator.wait_for_everyone()

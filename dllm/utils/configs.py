@@ -22,6 +22,7 @@ class ModelArguments:
     lora_dropout: float = 0.05
     bias: str = "none"
     modules_to_save: str = None
+    eval_checkpoint: str = None
 
     def __post_init__(self):
         self.model_name_or_path = resolve_with_base_env(
