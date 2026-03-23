@@ -37,8 +37,8 @@ class PumaLoss(nn.Module):
         self.mask_token_id = mask_token_id
         self.threshold = threshold
 
-    def forward(self, model, streaming_batch, **kwargs):
-        batch = streaming_batch.get_batch()
+    def forward(self, model, streaming_batch, slots: Optional[torch.Tensor] = None, **kwargs):
+        batch = streaming_batch.get_batch(slots=slots)
         input_ids = batch["input_ids"]
         labels = batch["labels"]
         attention_mask = batch.get("attention_mask")
@@ -49,9 +49,8 @@ class PumaLoss(nn.Module):
         logits = outputs.logits
         h_s = getattr(outputs, "h_s", None)
         
-        # Loss calculation
+        # Loss calculation (on selected slots)
         maskable_mask = labels != -100
-        masked_mask = (input_ids == self.mask_token_id) & maskable_mask
         
         loss = F.cross_entropy(
             logits.transpose(1, 2),
@@ -62,9 +61,8 @@ class PumaLoss(nn.Module):
         # Normalize by maskable tokens to match baseline gradient scale
         loss = loss.sum() / maskable_mask.float().sum().clamp_min(1)
         
-        # Update streaming batch (On-policy unmasking)
-        # We DETACH h_s here to avoid cross-training-step BPTT unless explicitly doing BPTT
-        streaming_batch.update(logits, threshold=self.threshold, h_s=h_s.detach() if h_s is not None else None)
+        # Update streaming batch (On-policy unmasking) - only for these slots
+        streaming_batch.update(logits, slots=slots, threshold=self.threshold, h_s=h_s.detach() if h_s is not None else None)
         
         return loss, outputs
 

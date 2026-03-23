@@ -219,16 +219,28 @@ class MDLMTrainer(transformers.Trainer):
                 # Capacity should be batch_size * gradient_accumulation_steps to avoid discarding data
                 capacity = self.args.per_device_train_batch_size * self.args.gradient_accumulation_steps
                 inputs = self._preprocess_inputs(inputs)
-                self.active_streaming_batch.evict_and_fill(
+                
+                # Filled slots from current mini-batch
+                slots = self.active_streaming_batch.evict_and_fill(
                     inputs, 
                     self.processing_class.mask_token_id,
                     capacity=capacity
                 )
                 
-                loss, outputs = self.loss_fn(model, self.active_streaming_batch)
-                # Meter update
+                # If no slots were ready to evict, we still must process 'batch_size' sequences 
+                # to maintain training throughput and memory usage matching baseline.
+                if len(slots) < self.args.per_device_train_batch_size:
+                    # Pick remaining random slots from the buffer that are NOT ready to evict
+                    needed = self.args.per_device_train_batch_size - len(slots)
+                    extra_slots = self.active_streaming_batch.pick_random_slots(needed)
+                    slots = torch.cat([slots, extra_slots]) if len(slots) > 0 else extra_slots
+                
+                # Only run loss on selected slots (fixes OOM)
+                loss, outputs = self.loss_fn(model, self.active_streaming_batch, slots=slots)
+                
+                # Meter update for processed slots
                 with torch.no_grad():
-                    batch = self.active_streaming_batch.get_batch()
+                    batch = self.active_streaming_batch.get_batch(slots=slots)
                     m_logits = outputs.logits
                     m_labels = batch["labels"]
                     m_input_ids = batch["input_ids"]
