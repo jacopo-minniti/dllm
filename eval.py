@@ -104,7 +104,7 @@ def main():
 
     # Slugify pretrained path for filename
     model_slug = pretrained.strip("./").replace("/", "__")
-    cache_dir = ".eval_cache"
+    cache_dir = ".evals"
     os.makedirs(cache_dir, exist_ok=True)
     auto_checkpoint = os.path.join(cache_dir, f"{model_slug}_{tasks_str}.jsonl")
     

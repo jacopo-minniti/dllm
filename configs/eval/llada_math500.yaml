@@ -5,7 +5,7 @@ evaluation:
   tasks: "hendrycks_math500"
   batch_size: 8
   device: "cuda"
-  output_path: "./evals/llada_math500"
+  output_path: "./.evals/llada_math500"
   apply_chat_template: true
   num_fewshot: 0
   log_samples: true

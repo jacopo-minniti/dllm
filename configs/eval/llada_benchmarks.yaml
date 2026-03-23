@@ -6,7 +6,7 @@ evaluation:
   tasks: "hendrycks_math500,gsm8k_cot,arc_challenge,hellaswag"
   batch_size: 4
   device: "cuda"
-  output_path: "./eval_results/llada_benchmarks"
+  output_path: "./.evals/llada_benchmarks"
   apply_chat_template: true
   num_fewshot: 0
   log_samples: true
