@@ -3,17 +3,16 @@ evaluation:
   script_path: "dllm/pipelines/llada/eval.py"
   model: "llada"
   tasks: "hendrycks_math500"
-  batch_size: 8
+  batch_size: 4
   device: "cuda"
   output_path: "./.evals/llada_math500"
   apply_chat_template: true
   num_fewshot: 0
   log_samples: true
-  # write_out: true # Included by default in eval.py now
   
   # Model initialization details (passed as comma-separated key=val)
   model_args:
-    pretrained: ".models/llada-lora-tulu3/lr2e-5_s42/checkpoint-2000" # "GSAI-ML/LLaDA-8B-Base"
+    pretrained: "GSAI-ML/LLaDA-8B-Base" # ".models/llada-lora-tulu3/lr2e-5_s42/checkpoint-2000"
     dtype: "bfloat16"
     max_new_tokens: 2048
     steps: 128
