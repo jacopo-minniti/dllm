@@ -4,16 +4,35 @@ import subprocess
 import os
 import sys
 
+def resolve_config_path(path: str, base_dir: str) -> str:
+    """
+    Resolves a config name to a full path.
+    1. If path exists as-is, return it.
+    2. If base_dir/path exists, return it.
+    3. If base_dir/path.yaml exists, return it.
+    """
+    if os.path.exists(path):
+        return path
+    
+    # Try directory-specific resolution
+    p = os.path.join(base_dir, path)
+    if os.path.exists(p):
+        return p
+    if not p.endswith(".yaml") and os.path.exists(p + ".yaml"):
+        return p + ".yaml"
+    
+    return path # fall back to original for error reporting
+
 def main():
     parser = argparse.ArgumentParser(description="Central Training Launcher for dLLM")
     
     # Core Config Paths
     parser.add_argument("--run_config", 
-                        default="configs/train/lora_baseline.yaml",
-                        help="Path to training/wandb configuration YAML")
+                        default="lora_baseline",
+                        help="Name or path of training/wandb configuration YAML")
     parser.add_argument("--slurm_config", 
-                        default="configs/slurm/default.yaml",
-                        help="Path to Slurm resource configuration YAML")
+                        default="default",
+                        help="Name or path of Slurm resource configuration YAML")
     parser.add_argument("--accelerate_config", 
                         default="fsdp", 
                         help="Name of accelerate config (located in configs/accelerate/)")
@@ -21,13 +40,9 @@ def main():
     # Collect remaining args to pass directly to training script
     args, extra_args = parser.parse_known_args()
 
-    # Verify paths
-    if not os.path.exists(args.run_config):
-        print(f"Error: Run config not found at {args.run_config}")
-        sys.exit(1)
-    if not os.path.exists(args.slurm_config):
-        print(f"Error: Slurm config not found at {args.slurm_config}")
-        sys.exit(1)
+    # Resolve paths
+    args.run_config = resolve_config_path(args.run_config, "configs/train")
+    args.slurm_config = resolve_config_path(args.slurm_config, "configs/slurm")
 
     # 1. Load YAML Configurations
     with open(args.run_config, 'r') as f:

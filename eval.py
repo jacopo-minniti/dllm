@@ -8,16 +8,35 @@ def dict_to_arg_str(d, sep=","):
     """Convert dict to 'key=val,key2=val2' format."""
     return sep.join([f"{k}={v}" for k, v in d.items()])
 
+def resolve_config_path(path: str, base_dir: str) -> str:
+    """
+    Resolves a config name to a full path.
+    1. If path exists as-is, return it.
+    2. If base_dir/path exists, return it.
+    3. If base_dir/path.yaml exists, return it.
+    """
+    if os.path.exists(path):
+        return path
+    
+    # Try directory-specific resolution
+    p = os.path.join(base_dir, path)
+    if os.path.exists(p):
+        return p
+    if not p.endswith(".yaml") and os.path.exists(p + ".yaml"):
+        return p + ".yaml"
+    
+    return path # fall back to original for error reporting
+
 def main():
     parser = argparse.ArgumentParser(description="Central Evaluation Launcher for dLLM")
     
     # Core Config Paths
     parser.add_argument("--run_config", 
-                        default="configs/eval/llada_math500.yaml",
-                        help="Path to evaluation configuration YAML")
+                        default="llada_math500",
+                        help="Name or path of evaluation configuration")
     parser.add_argument("--slurm_config", 
-                        default="configs/slurm/default.yaml",
-                        help="Path to Slurm resource configuration YAML")
+                        default="default",
+                        help="Name or path of Slurm resource configuration")
     parser.add_argument("--accelerate_config", 
                         default="ddp", 
                         help="Name of accelerate config (located in configs/accelerate/)")
@@ -25,13 +44,9 @@ def main():
     # Collect remaining args to pass directly to the eval script
     args, extra_args = parser.parse_known_args()
 
-    # Verify paths
-    if not os.path.exists(args.run_config):
-        print(f"Error: Run config not found at {args.run_config}")
-        sys.exit(1)
-    if not os.path.exists(args.slurm_config):
-        print(f"Error: Slurm config not found at {args.slurm_config}")
-        sys.exit(1)
+    # Resolve paths
+    args.run_config = resolve_config_path(args.run_config, "configs/eval")
+    args.slurm_config = resolve_config_path(args.slurm_config, "configs/slurm")
 
     # 1. Load YAML Configurations
     with open(args.run_config, 'r') as f:
