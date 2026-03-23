@@ -24,4 +24,4 @@ evaluation:
   wandb_args:
     name: "0"
     group: "llada-lora-math500"
-    tags: "baseline,eval"
+    tags: "baseline evaluation"

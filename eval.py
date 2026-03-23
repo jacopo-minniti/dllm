@@ -74,15 +74,23 @@ def main():
                 else:
                     slurm_directives.append(f"#SBATCH {flag} {v}")
 
-    # 3. Prepare Evaluation Command
+    # 3. Setup WandB and Environment Variables
     evaluation = run_cfg.get("evaluation", {})
     script_path = evaluation.pop("script_path", "dllm/pipelines/llada/eval.py")
     
-    # Construct eval flags from YAML
+    wb = evaluation.pop("wandb_args", {})
+    env_exports = [
+        f"export WANDB_NAME=\"{wb.get('name', 'eval')}\"",
+        f"export WANDB_RUN_GROUP=\"{wb.get('group', 'evals')}\"",
+        f"export WANDB_TAGS=\"{wb.get('tags', '').replace(',', '|')}\"", # Use pipe as a safe intermediate
+        "export PYTHONUNBUFFERED=1",
+        "export NCCL_DEBUG=INFO"
+    ]
+    
     eval_flags = []
     
-    # Handle dict-based args (model_args, wandb_args, gen_kwargs)
-    for key in ["model_args", "wandb_args", "gen_kwargs"]:
+    # Handle remaining dict-based args (model_args, gen_kwargs)
+    for key in ["model_args", "gen_kwargs"]:
         val = evaluation.pop(key, None)
         if val:
             if isinstance(val, dict):
@@ -135,8 +143,7 @@ else
     echo "Warning: Could not find .venv/bin/activate"
 fi
 
-export PYTHONUNBUFFERED=1
-export NCCL_DEBUG=INFO
+{chr(10).join(env_exports)}
 
 # ===== Scale Calculation =====
 # Evaluation is forced to 1 node for stability
