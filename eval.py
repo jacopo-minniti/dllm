@@ -87,9 +87,36 @@ def main():
         "export NCCL_DEBUG=INFO"
     ]
     
+    # 3b. Automatic Evaluation Checkpoint Construction
+    # Find tasks and pretrained for naming
+    tasks_str = str(evaluation.get("tasks", "eval")).replace(",", "_")
+    model_args = evaluation.get("model_args", {})
+    pretrained = model_args.get("pretrained", "model")
+    
+    # Overwrite from CLI if present
+    for arg in extra_args:
+        if arg.startswith("--tasks"):
+            tasks_str = arg.split()[-1].replace(",", "_")
+        if "--model_args" in arg and "pretrained=" in arg:
+            # simple extraction
+            part = arg.split("pretrained=")[-1].split(",")[0].strip("\" '")
+            pretrained = part
+
+    # Slugify pretrained path for filename
+    model_slug = pretrained.strip("./").replace("/", "__")
+    cache_dir = ".eval_cache"
+    os.makedirs(cache_dir, exist_ok=True)
+    auto_checkpoint = os.path.join(cache_dir, f"{model_slug}_{tasks_str}.jsonl")
+    
+    if "eval_checkpoint" not in model_args:
+        model_args["eval_checkpoint"] = auto_checkpoint
+        print(f"📦 Automatic eval_checkpoint: {auto_checkpoint}")
+
     eval_flags = []
     
     # Handle remaining dict-based args (model_args, gen_kwargs)
+    # Re-inject updated model_args back into evaluation if needed
+    evaluation["model_args"] = model_args
     for key in ["model_args", "gen_kwargs"]:
         val = evaluation.pop(key, None)
         if val:
