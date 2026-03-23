@@ -13,7 +13,7 @@ evaluation:
   
   # Model initialization details (passed as comma-separated key=val)
   model_args:
-    pretrained: "GSAI-ML/LLaDA-8B-Base"
+    pretrained: ".models/llada-lora-tulu3/lr2e-5_s42/checkpoint-2000" # "GSAI-ML/LLaDA-8B-Base"
     dtype: "bfloat16"
     max_new_tokens: 1024
     steps: 1024
