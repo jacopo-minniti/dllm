@@ -8,12 +8,14 @@ Run: Not runnable directly; use pipeline eval entrypoints (e.g. dllm.pipelines.l
 
 import os
 import dataclasses
+import json
 from dataclasses import dataclass
 
 import accelerate
 import torch
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
+from lm_eval.tasks import get_task_dict
 from tqdm import tqdm
 
 from ..samplers import BaseSampler, BaseSamplerConfig
@@ -149,7 +151,6 @@ class BaseEvalHarness(LM):
         processed_results = {}
         
         if checkpoint_path and os.path.exists(checkpoint_path):
-            import json
             print(f"🔄 Resuming evaluation from checkpoint: {checkpoint_path}")
             with open(checkpoint_path, "r") as f:
                 for line in f:
@@ -214,10 +215,50 @@ class BaseEvalHarness(LM):
                 out[real_idx] = answer
                 
                 if checkpoint_path:
-                    new_saves.append({"context": contexts[j], "answer": answer})
+                    # Capture richer information if available
+                    real_idx = batch_idxs[j]
+                    inst = requests[real_idx]
+                    save_record = {
+                        "context": contexts[j], 
+                        "answer": answer,
+                    }
+                    
+                    # Extract metadata (task_name, doc, etc.) from Instance
+                    doc = getattr(inst, "doc", None)
+                    task_name = getattr(inst, "task_name", None)
+                    metadata = getattr(inst, "metadata", None)
+                    if not task_name and isinstance(metadata, (list, tuple)) and len(metadata) > 0:
+                        task_name = metadata[0]
+
+                    if task_name:
+                        save_record["task"] = task_name
+                    
+                    if doc:
+                        # Add a reference to the ground truth
+                        for key in ["answer", "gold", "target"]:
+                            if key in doc:
+                                save_record["gold_answer"] = doc[key]
+                                break
+
+                        # Compute and attach task-specific metrics (e.g., exact_match)
+                        try:
+                            if task_name:
+                                if not hasattr(self, "_task_cache"):
+                                    self._task_cache = {}
+                                if task_name not in self._task_cache:
+                                    self._task_cache[task_name] = get_task_dict([task_name])[task_name]
+                                
+                                task = self._task_cache[task_name]
+                                metrics = task.process_results(doc, [answer])
+                                if isinstance(metrics, dict):
+                                    save_record.update(metrics)
+                        except Exception:
+                            # Fallback if metric computation fails
+                            pass
+
+                    new_saves.append(save_record)
 
             if checkpoint_path and new_saves:
-                import json
                 with open(checkpoint_path, "a") as f:
                     for item in new_saves:
                         f.write(json.dumps(item) + "\n")
