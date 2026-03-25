@@ -164,6 +164,8 @@ def main():
     # Get working directory
     working_dir = slurm_cfg.get("working_dir", os.getcwd())
 
+    eval_flags_escaped = [f.replace('"', '\\"') for f in eval_flags]
+    
     # 4. Generate the Slurm Bash Script
     bash_script = f"""{chr(10).join(slurm_directives)}
 set -e
@@ -204,15 +206,16 @@ fi
 echo "Launching Evaluation: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_ADDR:$MASTER_PORT"
 
 # ===== Execution =====
-srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" accelerate launch \\
-  --config_file "{acc_config}" \\
-  --num_machines "${{NUM_NODES}}" \\
-  --num_processes "${{WORLD_SIZE}}" \\
-  --main_process_ip "${{MASTER_ADDR}}" \\
-  --main_process_port "${{MASTER_PORT}}" \\
-  --machine_rank "\$SLURM_NODEID" \\
+srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" \\
+  bash -c "accelerate launch \\
+  --config_file '{acc_config}' \\
+  --num_machines '${{NUM_NODES}}' \\
+  --num_processes '${{WORLD_SIZE}}' \\
+  --main_process_ip '${{MASTER_ADDR}}' \\
+  --main_process_port '${{MASTER_PORT}}' \\
+  --machine_rank \$SLURM_PROCID \\
   --rdzv_backend c10d \\
-  "{script_path}" {" ".join(eval_flags)}
+  '{script_path}' {' '.join(eval_flags_escaped)}"
 """
 
     # Write to a temporary file
