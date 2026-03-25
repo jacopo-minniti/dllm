@@ -156,7 +156,10 @@ class BaseEvalHarness(LM):
                 for line in f:
                     try:
                         data = json.loads(line)
-                        processed_results[data["context"]] = data["answer"]
+                        # Support both new 'question' and old 'context' keys for resume
+                        ctx = data.get("question", data.get("context"))
+                        if ctx:
+                            processed_results[ctx] = data["answer"]
                     except Exception:
                         continue
             print(f"✅ Loaded {len(processed_results)} existing results.")
@@ -219,7 +222,7 @@ class BaseEvalHarness(LM):
                     real_idx = batch_idxs[j]
                     inst = requests[real_idx]
                     save_record = {
-                        "context": contexts[j], 
+                        "question": contexts[j], 
                         "answer": answer,
                     }
                     
@@ -234,10 +237,10 @@ class BaseEvalHarness(LM):
                         save_record["task"] = task_name
                     
                     if doc:
-                        # Add a reference to the ground truth
-                        for key in ["answer", "gold", "target"]:
+                        # Add a reference to the ground truth (solution)
+                        for key in ["answer", "gold", "target", "solution"]:
                             if key in doc:
-                                save_record["gold_answer"] = doc[key]
+                                save_record["solution"] = doc[key]
                                 break
 
                         # Compute and attach task-specific metrics (e.g., exact_match)
@@ -249,6 +252,8 @@ class BaseEvalHarness(LM):
                                     self._task_cache[task_name] = get_task_dict([task_name])[task_name]
                                 
                                 task = self._task_cache[task_name]
+                                
+                                # lm-eval task.process_results usually returns a dict of metrics.
                                 metrics = task.process_results(doc, [answer])
                                 if isinstance(metrics, dict):
                                     save_record.update(metrics)
