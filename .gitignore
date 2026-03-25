@@ -140,3 +140,4 @@ dmypy.json
 .generated_train.sh
 .generated_eval.sh
 /.evals/
+test.py
