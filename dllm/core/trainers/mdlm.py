@@ -88,6 +88,19 @@ class MDLMTrainer(transformers.Trainer):
         self.loss_fn = self.loss_fns.get(args.loss_type, self.loss_fns["mlm"])
         self.active_streaming_batch = None
 
+        # Check for potential NCCL timeouts in distributed training with PUMA
+        if (
+            self.args.world_size > 1 
+            and "puma" in self.args.loss_type 
+            and self.args.max_steps < 0
+        ):
+             transformers.logging.get_logger(__name__).warning(
+                 "You are running PUMA in a distributed environment without setting `max_steps`. "
+                 "This may lead to NCCL timeouts if dataset shards have different lengths because "
+                 "PUMA unmasking variability can cause different ranks to reach the end of their epochs "
+                 "at slightly different times. Consider setting `max_steps` and ensuring your dataset is infinite."
+             )
+
     def _preprocess_inputs(self, inputs):
         if self.right_shift_logits:
             labels = inputs.get("labels", None)

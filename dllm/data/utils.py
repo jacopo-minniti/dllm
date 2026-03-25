@@ -1,5 +1,6 @@
 import re
 
+from typing import Any, Dict, List, Optional, Tuple, Union
 from datasets import (
     Dataset,
     DatasetDict,
@@ -14,9 +15,27 @@ from dllm.utils.utils import get_default_logger, parse_spec, resolve_with_base_e
 logger = get_default_logger(__name__)
 
 
+def make_dataset_infinite(ds: Union[Dataset, IterableDataset, DatasetDict, IterableDatasetDict]):
+    """
+    Make a dataset repeat infinitely. 
+    Useful for distributed training to avoid NCCL timeouts when ranks have different shard lengths.
+    """
+    if isinstance(ds, (DatasetDict, IterableDatasetDict)):
+        return type(ds)({k: (make_dataset_infinite(v) if k == "train" else v) for k, v in ds.items()})
+    
+    if isinstance(ds, IterableDataset):
+        return ds.repeat(None)
+    
+    if isinstance(ds, Dataset):
+        # Convert to IterableDataset and repeat
+        return ds.to_iterable_dataset().repeat(None)
+    
+    return ds
+
+
 def load_sft_dataset(
-    dataset_args: str, load_preprocessed_data: bool = False
-) -> DatasetDict:
+    dataset_args: str, load_preprocessed_data: bool = False, infinite: bool = False
+) -> Union[DatasetDict, IterableDatasetDict]:
     """
     Examples of dataset_args:
       - "tatsu-lab/alpaca"
@@ -82,12 +101,17 @@ def load_sft_dataset(
     merged = all_parts[0]
     for part in all_parts[1:]:
         merged = _merge_datasetdicts(merged, part)
-    return _ensure_datasetdict(merged)
+    
+    ds = _ensure_datasetdict(merged)
+    if infinite:
+        logger.info("Repeating SFT dataset infinitely.")
+        ds = make_dataset_infinite(ds)
+    return ds
 
 
 def load_pt_dataset(
-    dataset_args: str, streaming: bool = True, load_preprocessed_data: bool = False
-) -> DatasetDict | IterableDatasetDict:
+    dataset_args: str, streaming: bool = True, load_preprocessed_data: bool = False, infinite: bool = True
+) -> Union[DatasetDict, IterableDatasetDict]:
     """
     Examples of dataset_args:
       - "mlfoundations/dclm-baseline-1.0"
@@ -156,20 +180,28 @@ def load_pt_dataset(
         merged = parts[0]
         for p in parts[1:]:
             merged = _merge_iterabledatasetdicts(merged, p)
-        # repeat streaming dataset infinitely
-        merged = IterableDatasetDict(
-            {k: (v.repeat(None) if k == "train" else v) for k, v in merged.items()}
-        )
-        return merged
+        
+        ds = _ensure_iterabledatasetdict(merged)
+        if infinite:
+            # Note: load_pt_dataset already used to repeat streaming train split, 
+            # now we use the unified make_dataset_infinite helper.
+            ds = make_dataset_infinite(ds)
+        return ds
     else:
         logger.info("Loading dataset in non-streaming mode.")
         parts = [_load_one_nonstreaming_spec(raw) for raw in specs]
         if len(parts) == 1:
-            return _ensure_datasetdict(parts[0])
-        merged = parts[0]
-        for p in parts[1:]:
-            merged = _merge_datasetdicts(merged, p)
-        return _ensure_datasetdict(merged)
+            merged = _ensure_datasetdict(parts[0])
+        else:
+            merged = parts[0]
+            for p in parts[1:]:
+                merged = _merge_datasetdicts(merged, p)
+            merged = _ensure_datasetdict(merged)
+        
+        if infinite:
+            logger.info("Repeating non-streaming PT dataset infinitely.")
+            merged = make_dataset_infinite(merged)
+        return merged
 
 
 def _truncate_split(split_data, n: int):
