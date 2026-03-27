@@ -40,6 +40,9 @@ def main():
     parser.add_argument("--accelerate_config", 
                         default="ddp", 
                         help="Name of accelerate config (located in configs/accelerate/)")
+    parser.add_argument("--temperature",
+                        type=float,
+                        help="Override generation temperature")
     
     # Collect remaining args to pass directly to the eval script
     args, extra_args = parser.parse_known_args()
@@ -106,6 +109,15 @@ def main():
     # Find tasks and pretrained for naming
     tasks_str = str(evaluation.get("tasks", "eval")).replace(",", "_")
     model_args = evaluation.get("model_args", {})
+
+    # Pull temperature from top-level evaluation config if present
+    if "temperature" in evaluation:
+        model_args["temperature"] = evaluation.pop("temperature")
+    
+    # Overwrite from CLI if present
+    if args.temperature is not None:
+        model_args["temperature"] = args.temperature
+
     pretrained = model_args.get("pretrained", "model")
     
     # Overwrite from CLI if present
@@ -119,9 +131,14 @@ def main():
 
     # Slugify pretrained path for filename
     model_slug = pretrained.strip("./").replace("/", "__")
+    
+    # Include temperature in slug if non-zero
+    temp = model_args.get("temperature", 0.0)
+    temp_suffix = f"_t{temp}" if temp != 0.0 else ""
+    
     cache_dir = ".evals"
     os.makedirs(cache_dir, exist_ok=True)
-    auto_checkpoint = os.path.join(cache_dir, f"{model_slug}_{tasks_str}.jsonl")
+    auto_checkpoint = os.path.join(cache_dir, f"{model_slug}_{tasks_str}{temp_suffix}.jsonl")
     
     if "eval_checkpoint" not in model_args:
         model_args["eval_checkpoint"] = auto_checkpoint
