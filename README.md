@@ -19,7 +19,7 @@ pip install torch==2.6.0 torchvision torchaudio --index-url https://download.pyt
 
 # 3. Setup Evaluation Harness
 git submodule update --init --recursive
-pip install -e "lm-evaluation-harness"
+pip install -e lm-evaluation-harness
 
 # 4. Prepare logs director
 mkdir .logs
