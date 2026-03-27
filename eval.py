@@ -31,18 +31,9 @@ def main():
     parser = argparse.ArgumentParser(description="Central Evaluation Launcher for dLLM")
     
     # Core Config Paths
-    parser.add_argument("--run_config", 
-                        default="llada_math500",
-                        help="Name or path of evaluation configuration")
-    parser.add_argument("--slurm_config", 
-                        default="default",
-                        help="Name or path of Slurm resource configuration")
-    parser.add_argument("--accelerate_config", 
-                        default="ddp", 
-                        help="Name of accelerate config (located in configs/accelerate/)")
-    parser.add_argument("--temperature",
-                        type=float,
-                        help="Override generation temperature")
+    parser.add_argument("run_config", help="Name or path of evaluation configuration")
+    parser.add_argument("--slurm_config", required=True, help="Name or path of Slurm resource configuration")
+    parser.add_argument("--accelerate_config", default="ddp", help="Name of accelerate config (located in configs/accelerate/)")
     
     # Collect remaining args to pass directly to the eval script
     args, extra_args = parser.parse_known_args()
@@ -113,10 +104,6 @@ def main():
     # Pull temperature from top-level evaluation config if present
     if "temperature" in evaluation:
         model_args["temperature"] = evaluation.pop("temperature")
-    
-    # Overwrite from CLI if present
-    if args.temperature is not None:
-        model_args["temperature"] = args.temperature
 
     pretrained = model_args.get("pretrained", "model")
     
