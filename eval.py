@@ -193,7 +193,7 @@ echo "Running from: $(pwd)"
 cd {working_dir}
 echo "Switched to: $(pwd)"
 
-module load slurm StdEnv/2023 python/3.11.5 cuda/12.6 cudnn
+module load StdEnv/2023 python/3.11.5 cuda/12.6 cudnn
 module load gcc opencv arrow
 
 # Activate virtualenv
