@@ -9,6 +9,7 @@ Run: Not runnable directly; use pipeline eval entrypoints (e.g. dllm.pipelines.l
 import os
 import dataclasses
 import json
+import re
 from dataclasses import dataclass
 
 import accelerate
@@ -143,6 +144,72 @@ class BaseEvalHarness(LM):
             continue_final_message=not add_generation_prompt,
         )
 
+    # ── Evaluation Logic ──────────────────────────────────────────────
+    
+    def _truncate_hallucinations(self, text: str) -> str:
+        """
+        Base models hallucinate subsequent few-shot examples. 
+        This cuts off the generation when a new question starts.
+        """
+        if not text:
+            return ""
+        
+        return text[:20]
+
+    def _normalize(self, text: str) -> str:
+        """
+        Standardizes math strings by removing formatting and spaces.
+        """
+        if not text:
+            return ""
+        
+        text = str(text).lower()
+        text = text.replace(r"\\", "").replace("\\", "")
+        text = text.replace("{", "").replace("}", "")
+        text = text.replace("x=", "").replace("y=", "").replace("z=", "")
+        text = re.sub(r"\s+", "", text)
+        
+        return text
+
+    def _is_strict_match(self, norm_solution: str, norm_answer: str) -> tuple[bool, any]:
+        """
+        Checks if the solution is in the answer with dynamic boundaries.
+        """
+        if not norm_solution or not norm_answer:
+            return False, None
+
+        escaped_sol = re.escape(norm_solution)
+
+        # Dynamic boundaries
+        prefix_bound = r"(?<!\d)" if norm_solution[0].isdigit() else r"(?<![a-z])" if norm_solution[0].isalpha() else ""
+        suffix_bound = r"(?!\d)" if norm_solution[-1].isdigit() else r"(?![a-z])" if norm_solution[-1].isalpha() else ""
+
+        pattern = prefix_bound + escaped_sol + suffix_bound
+        match = re.search(pattern, norm_answer)
+        
+        return match is not None, match
+
+    def _extract_raw_snippet(self, truncated_answer: str, norm_solution: str, context_size: int = 150) -> str:
+        """
+        Reverse-engineers the normalization to find the exact unnormalized snippet.
+        """
+        if not norm_solution:
+            return truncated_answer[-context_size:] if len(truncated_answer) > context_size else truncated_answer
+
+        pattern_chars = [re.escape(char) for char in norm_solution]
+        filler = r'[\s\\{}]*'
+        pattern = filler.join(pattern_chars)
+        
+        match = re.search(pattern, str(truncated_answer).lower())
+        if match:
+            start, end = match.span()
+            start_idx = max(0, start - context_size)
+            end_idx = min(len(truncated_answer), end + context_size)
+            snippet = truncated_answer[start_idx:end_idx]
+            return f"...{snippet}..."
+        
+        return truncated_answer[-context_size:] if len(truncated_answer) > context_size else truncated_answer
+
     # ── Unified generate_until scaffolding ────────────────────────────
     @torch.no_grad()
     def generate_until(self, requests: list[Instance]) -> list[str]:
@@ -221,45 +288,57 @@ class BaseEvalHarness(LM):
                     # Capture richer information if available
                     real_idx = batch_idxs[j]
                     inst = requests[real_idx]
+                    
+                    # Extract ground truth solution
+                    doc = getattr(inst, "doc", None)
+                    raw_solution = ""
+                    if doc:
+                        for key in ["answer", "gold", "target", "solution"]:
+                            if key in doc:
+                                raw_solution = doc[key]
+                                break
+                    
+                    # 1. Truncate
+                    truncated_answer = self._truncate_hallucinations(answer)
+                    
+                    # 2. Normalize
+                    norm_answer = self._normalize(truncated_answer)
+                    norm_solution = self._normalize(raw_solution)
+                    
+                    # 3. Match
+                    is_correct, _ = self._is_strict_match(norm_solution, norm_answer)
+                    
+                    if is_correct:
+                        if not hasattr(self, "_printed_correct_count"):
+                            self._printed_correct_count = {}
+                        task_name = getattr(inst, "task_name", "eval")
+                        count = self._printed_correct_count.get(task_name, 0)
+                        
+                        if count < 20:
+                            snippet = self._extract_raw_snippet(truncated_answer, norm_solution, context_size=150)
+                            print(f"Row {real_idx} | ✅ CORRECT (Match #{count + 1})")
+                            print(f"  Raw Solution: {raw_solution}")
+                            print(f"  Context:\n  {snippet.strip()}")
+                            print("-" * 60)
+                            self._printed_correct_count[task_name] = count + 1
+                    
+                    # Reorder fields based on requirements:
+                    # first the ground truth solution, then the is_correct, 
+                    # then the question and finally the answer genrated by the model.
                     save_record = {
+                        "solution": raw_solution,
+                        "is_correct": bool(is_correct),
                         "question": contexts[j], 
                         "answer": answer,
                     }
                     
-                    # Extract metadata (task_name, doc, etc.) from Instance
-                    doc = getattr(inst, "doc", None)
+                    # Extract task name for logging if needed
                     task_name = getattr(inst, "task_name", None)
                     metadata = getattr(inst, "metadata", None)
                     if not task_name and isinstance(metadata, (list, tuple)) and len(metadata) > 0:
                         task_name = metadata[0]
-
                     if task_name:
                         save_record["task"] = task_name
-                    
-                    if doc:
-                        # Add a reference to the ground truth (solution)
-                        for key in ["answer", "gold", "target", "solution"]:
-                            if key in doc:
-                                save_record["solution"] = doc[key]
-                                break
-
-                        # Compute and attach task-specific metrics (e.g., exact_match)
-                        try:
-                            if task_name:
-                                if not hasattr(self, "_task_cache"):
-                                    self._task_cache = {}
-                                if task_name not in self._task_cache:
-                                    self._task_cache[task_name] = get_task_dict([task_name])[task_name]
-                                
-                                task = self._task_cache[task_name]
-                                
-                                # lm-eval task.process_results usually returns a dict of metrics.
-                                metrics = task.process_results(doc, [answer])
-                                if isinstance(metrics, dict):
-                                    save_record.update(metrics)
-                        except Exception:
-                            # Fallback if metric computation fails
-                            pass
 
                     new_saves.append(save_record)
 

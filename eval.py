@@ -132,13 +132,27 @@ def main():
     # Slugify pretrained path for filename
     model_slug = pretrained.strip("./").replace("/", "__")
     
-    # Include temperature in slug if non-zero
+    # Include relevant hyperparams in slug
     temp = model_args.get("temperature", 0.0)
-    temp_suffix = f"_t{temp}" if temp != 0.0 else ""
+    max_tokens = model_args.get("max_new_tokens")
+    steps = model_args.get("steps")
+    block_size = model_args.get("block_size")
+    
+    info_parts = []
+    if temp != 0.0:
+        info_parts.append(f"t{temp}")
+    if max_tokens:
+        info_parts.append(f"mt{max_tokens}")
+    if steps:
+        info_parts.append(f"s{steps}")
+    if block_size:
+        info_parts.append(f"bs{block_size}")
+    
+    info_suffix = f"_{'_'.join(info_parts)}" if info_parts else ""
     
     cache_dir = ".evals"
     os.makedirs(cache_dir, exist_ok=True)
-    auto_checkpoint = os.path.join(cache_dir, f"{model_slug}_{tasks_str}{temp_suffix}.jsonl")
+    auto_checkpoint = os.path.join(cache_dir, f"{model_slug}_{tasks_str}{info_suffix}.jsonl")
     
     if "eval_checkpoint" not in model_args:
         model_args["eval_checkpoint"] = auto_checkpoint
