@@ -144,72 +144,6 @@ class BaseEvalHarness(LM):
             continue_final_message=not add_generation_prompt,
         )
 
-    # ── Evaluation Logic ──────────────────────────────────────────────
-    
-    def _truncate_hallucinations(self, text: str) -> str:
-        """
-        Base models hallucinate subsequent few-shot examples. 
-        This cuts off the generation when a new question starts.
-        """
-        if not text:
-            return ""
-        
-        return text[:20]
-
-    def _normalize(self, text: str) -> str:
-        """
-        Standardizes math strings by removing formatting and spaces.
-        """
-        if not text:
-            return ""
-        
-        text = str(text).lower()
-        text = text.replace(r"\\", "").replace("\\", "")
-        text = text.replace("{", "").replace("}", "")
-        text = text.replace("x=", "").replace("y=", "").replace("z=", "")
-        text = re.sub(r"\s+", "", text)
-        
-        return text
-
-    def _is_strict_match(self, norm_solution: str, norm_answer: str) -> tuple[bool, any]:
-        """
-        Checks if the solution is in the answer with dynamic boundaries.
-        """
-        if not norm_solution or not norm_answer:
-            return False, None
-
-        escaped_sol = re.escape(norm_solution)
-
-        # Dynamic boundaries
-        prefix_bound = r"(?<!\d)" if norm_solution[0].isdigit() else r"(?<![a-z])" if norm_solution[0].isalpha() else ""
-        suffix_bound = r"(?!\d)" if norm_solution[-1].isdigit() else r"(?![a-z])" if norm_solution[-1].isalpha() else ""
-
-        pattern = prefix_bound + escaped_sol + suffix_bound
-        match = re.search(pattern, norm_answer)
-        
-        return match is not None, match
-
-    def _extract_raw_snippet(self, truncated_answer: str, norm_solution: str, context_size: int = 150) -> str:
-        """
-        Reverse-engineers the normalization to find the exact unnormalized snippet.
-        """
-        if not norm_solution:
-            return truncated_answer[-context_size:] if len(truncated_answer) > context_size else truncated_answer
-
-        pattern_chars = [re.escape(char) for char in norm_solution]
-        filler = r'[\s\\{}]*'
-        pattern = filler.join(pattern_chars)
-        
-        match = re.search(pattern, str(truncated_answer).lower())
-        if match:
-            start, end = match.span()
-            start_idx = max(0, start - context_size)
-            end_idx = min(len(truncated_answer), end + context_size)
-            snippet = truncated_answer[start_idx:end_idx]
-            return f"...{snippet}..."
-        
-        return truncated_answer[-context_size:] if len(truncated_answer) > context_size else truncated_answer
-
     # ── Unified generate_until scaffolding ────────────────────────────
     @torch.no_grad()
     def generate_until(self, requests: list[Instance]) -> list[str]:
@@ -298,29 +232,44 @@ class BaseEvalHarness(LM):
                                 raw_solution = doc[key]
                                 break
                     
-                    # 1. Truncate
-                    truncated_answer = self._truncate_hallucinations(answer)
+                    # Task-specific evaluation logic
+                    task_name = getattr(inst, "task_name", None)
+                    if not task_name and isinstance(inst.metadata, (list, tuple)) and len(inst.metadata) > 0:
+                        task_name = inst.metadata[0]
                     
-                    # 2. Normalize
-                    norm_answer = self._normalize(truncated_answer)
-                    norm_solution = self._normalize(raw_solution)
-                    
-                    # 3. Match
-                    is_correct, _ = self._is_strict_match(norm_solution, norm_answer)
+                    is_correct = False
+                    if task_name:
+                        if not hasattr(self, "_task_objects"):
+                            self._task_objects = {}
+                        
+                        if task_name not in self._task_objects:
+                            try:
+                                from lm_eval.tasks import get_task_dict
+                                self._task_objects[task_name] = get_task_dict([task_name])[task_name]
+                            except Exception:
+                                self._task_objects[task_name] = None
+                        
+                        task = self._task_objects.get(task_name)
+                        if task:
+                            # Use task's built-in evaluation logic
+                            res = task.process_results(doc, [answer])
+                            # Check if matches any metric with value 1 or True
+                            is_correct = any(bool(v == 1.0 or v is True) for v in res.values())
                     
                     if is_correct:
                         if not hasattr(self, "_printed_correct_count"):
                             self._printed_correct_count = {}
-                        task_name = getattr(inst, "task_name", "eval")
-                        count = self._printed_correct_count.get(task_name, 0)
+                        t_name = task_name or "eval"
+                        count = self._printed_correct_count.get(t_name, 0)
                         
                         if count < 20:
-                            snippet = self._extract_raw_snippet(truncated_answer, norm_solution, context_size=150)
+                            # Simple snippet for console logging
+                            snippet = answer[-200:] if len(answer) > 200 else answer
                             print(f"Row {real_idx} | ✅ CORRECT (Match #{count + 1})")
                             print(f"  Raw Solution: {raw_solution}")
-                            print(f"  Context:\n  {snippet.strip()}")
+                            print(f"  Final Answer Snippet:\n  {snippet.strip()}")
                             print("-" * 60)
-                            self._printed_correct_count[task_name] = count + 1
+                            self._printed_correct_count[t_name] = count + 1
                     
                     # Reorder fields based on requirements:
                     # first the ground truth solution, then the is_correct, 

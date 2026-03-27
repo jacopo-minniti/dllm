@@ -88,6 +88,8 @@ class MDLMSampler(BaseSampler):
         mask_id = self.tokenizer.mask_token_id
         bos_id = self.tokenizer.bos_token_id
         eos_id = self.tokenizer.eos_token_id
+        # Also support EOT if available
+        eot_id = getattr(self.tokenizer, "eot_token_id", None)
 
         # ----- Shape bookkeeping: per-sample prompt lengths and final canvas width -----
         # If right_shift_logits is true and a sequence has length 0, replace that sequence with [bos].
@@ -237,6 +239,31 @@ class MDLMSampler(BaseSampler):
                 x[transfer_index] = x0[transfer_index]
                 if histories is not None:
                     histories.append(x.clone())
+
+                # Efficiency & EOS respect: If a sequence produces an EOS/EOT, fill trailing masks
+                # for that sequence with EOS and check if the entire batch can stop early.
+                all_done = True
+                for j in range(B):
+                    gen_part = x[j, prompt_lens[j]:]
+                    # Check for termination tokens in the generated part
+                    term_mask = (gen_part == eos_id)
+                    if eot_id is not None:
+                        term_mask |= (gen_part == eot_id)
+
+                    term_indices = term_mask.nonzero(as_tuple=True)[0]
+                    if term_indices.numel() > 0:
+                        # Once we see a termination token, everything after it is irrelevant
+                        first_term_idx = prompt_lens[j] + term_indices[0].item()
+                        if first_term_idx + 1 < T:
+                            x[j, first_term_idx + 1:] = eos_id
+                    else:
+                        all_done = False
+
+                if all_done:
+                    break
+
+            if all_done:
+                break
 
         # ----- Output format -----
         if not return_dict:

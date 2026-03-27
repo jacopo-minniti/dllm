@@ -2,7 +2,7 @@
 evaluation:
   script_path: "dllm/pipelines/llada/eval.py"
   model: "llada"
-  tasks: "hendrycks_math500"
+  tasks: "math500_reasoning"
   batch_size: 1
   device: "cuda"
   output_path: "./.evals/llada_math500"
