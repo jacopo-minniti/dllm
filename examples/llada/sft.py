@@ -42,7 +42,7 @@ logger = dllm.utils.get_default_logger(__name__)
 
 @dataclass
 class ModelArguments(dllm.utils.ModelArguments):
-    model_name_or_path: str = "GSAI-ML/LLaDA-8B-Base"
+    model_name_or_path: str = "GSAI-ML/LLaDA-8B-Instruct"
 
 
 @dataclass
