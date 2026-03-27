@@ -3,7 +3,7 @@ evaluation:
   script_path: "dllm/pipelines/llada/eval.py"
   model: "llada"
   tasks: "hendrycks_math500"
-  batch_size: 4
+  batch_size: 1
   device: "cuda"
   output_path: "./.evals/llada_math500"
   apply_chat_template: false
@@ -19,7 +19,7 @@ evaluation:
     max_new_tokens: 256
     steps: 256
     block_size: 32
-    temperature: 0.0
+    temperature: 1.0
     remasking: "low_confidence"
 
   # WandB tracking details (passed as comma-separated key=val)
