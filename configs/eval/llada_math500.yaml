@@ -19,7 +19,8 @@ evaluation:
     max_new_tokens: 256
     steps: 256
     block_size: 32
-    temperature: 1.0
+    temperature: 0.0
+    remasking: "low_confidence"
 
   # WandB tracking details (passed as comma-separated key=val)
   # Project/Entity are picked up from environment variables (.env)

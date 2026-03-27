@@ -76,6 +76,13 @@ class MDLMSampler(BaseSampler):
             "begin_suppress_tokens", config.begin_suppress_tokens
         )
 
+        # Logging for confidence-based unmasking confirmation
+        print(f"--- Sampling Configuration ---")
+        print(f"Steps: {steps}, Max New Tokens: {max_new_tokens}, Block Size: {block_size}")
+        print(f"Temperature: {temperature}, Remasking: {remasking}")
+        print(f"CFG Scale: {cfg_scale}, Stochastic Transfer: {stochastic_transfer}")
+        print(f"------------------------------")
+
         assert 1 <= block_size
         assert 1 <= steps
         mask_id = self.tokenizer.mask_token_id
