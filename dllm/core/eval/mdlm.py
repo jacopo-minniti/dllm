@@ -151,8 +151,8 @@ class MDLMEvalHarness(BaseEvalHarness):
     def _get_loglikelihood(self, prefix: torch.Tensor, target: torch.Tensor) -> float:
         """Monte Carlo estimate of log-likelihood via _forward_process + _get_logits."""
         seq = torch.concatenate([prefix, target])[None, :]
-        seq = seq.repeat((self.batch_size, 1)).to(self.device)
-        prompt_index = torch.arange(seq.shape[1], device=self.device) < len(prefix)
+        seq = seq.repeat((self.batch_size, 1)).to(self._device)
+        prompt_index = torch.arange(seq.shape[1], device=self._device) < len(prefix)
 
         loss_acc = []
         for _ in range(self.mc_num // self.batch_size):
@@ -179,10 +179,10 @@ class MDLMEvalHarness(BaseEvalHarness):
             return False
 
         seq = torch.full(
-            (1, len(prefix) + len(target)), self.mask_id, device=self.device
+            (1, len(prefix) + len(target)), self.mask_id, device=self._device
         )
-        prompt_index = torch.arange(seq.shape[1], device=self.device) < len(prefix)
-        prefix, target = prefix.to(self.device), target.to(self.device)
+        prompt_index = torch.arange(seq.shape[1], device=self._device) < len(prefix)
+        prefix, target = prefix.to(self._device), target.to(self._device)
         seq[0, : len(prefix)] = prefix
 
         for i in range(len(target)):
@@ -211,9 +211,9 @@ class MDLMEvalHarness(BaseEvalHarness):
                 f"{len(context_enc)} + {len(continuation_enc)}"
             )
 
-            context = torch.tensor(context_enc, device=self.device, dtype=torch.long)
+            context = torch.tensor(context_enc, device=self._device, dtype=torch.long)
             continuation = torch.tensor(
-                continuation_enc, device=self.device, dtype=torch.long
+                continuation_enc, device=self._device, dtype=torch.long
             )
 
             logprob = self._get_loglikelihood(context, continuation)
