@@ -128,8 +128,21 @@ def main():
             except:
                 pass
 
-    # Slugify pretrained path for filename
-    model_slug = pretrained.strip("./").replace("/", "__")
+    # Slugify pretrained path for naming
+    model_path = pretrained.strip("./")
+    if model_path.startswith("models/"):
+        model_path = model_path[7:]
+    elif model_path.startswith("models__"):
+        model_path = model_path[8:]
+    
+    # Separate checkpoint number if it exists at the end
+    checkpoint_name = "default"
+    path_parts = model_path.split("/")
+    if path_parts[-1].startswith("checkpoint-"):
+        checkpoint_name = path_parts[-1]
+        model_path = "/".join(path_parts[:-1])
+    
+    model_slug = model_path.replace("/", "__")
     
     # Include relevant hyperparams in slug
     temp = model_args.get("temperature", 0.0)
@@ -153,7 +166,6 @@ def main():
     if num_fewshot > 0:
         info_parts.append(f"nf{num_fewshot}")
     
-    threshold = model_args.get("threshold", 0.0)
     try:
         threshold = float(threshold)
     except:
@@ -161,11 +173,12 @@ def main():
     if threshold > 0.0:
         info_parts.append(f"th{threshold}")
     
-    info_suffix = f"_{'_'.join(info_parts)}" if info_parts else ""
+    params_str = "_".join(info_parts) if info_parts else "default"
     
-    cache_dir = ".evals"
+    # Restructured storage: .evals/<task>/<model>/<checkpoint>/<params>.jsonl
+    cache_dir = os.path.join(".evals", tasks_str, model_slug, checkpoint_name)
     os.makedirs(cache_dir, exist_ok=True)
-    auto_checkpoint = os.path.join(cache_dir, f"{model_slug}_{tasks_str}{info_suffix}.jsonl")
+    auto_checkpoint = os.path.join(cache_dir, f"{params_str}.jsonl")
     
     if "eval_checkpoint" not in model_args:
         model_args["eval_checkpoint"] = auto_checkpoint
