@@ -1,5 +1,5 @@
 # Slurm Resource Requests
-job_name: "dllm"
+job_name: "llada-eval"
 nodes: 1
 gpus_per_node: "l40s:1"
 time: "01:00:00"

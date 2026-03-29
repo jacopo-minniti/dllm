@@ -14,7 +14,7 @@ evaluation:
   # .models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000
   # .models/llada-base-lora-puma/lr2e-5_s42/checkpoint-400 
   model_args:
-    pretrained: ".models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000"
+    pretrained: "GSAI-ML/LLaDA-8B-Instruct"
     dtype: "bfloat16"
     max_new_tokens: 256
     steps: 256
