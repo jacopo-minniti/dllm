@@ -111,10 +111,22 @@ def main():
     for arg in extra_args:
         if arg.startswith("--tasks"):
             tasks_str = arg.split()[-1].replace(",", "_")
-        if "--model_args" in arg and "pretrained=" in arg:
-            # simple extraction
-            part = arg.split("pretrained=")[-1].split(",")[0].strip("\" '")
-            pretrained = part
+        if "--model_args" in arg:
+            # Extract key=value pairs more robustly
+            # Format: --model_args "pretrained=...,threshold=..." or --model_args pretrained=...
+            arg_content = arg.split("--model_args")[-1].strip().strip("\"'")
+            for kv in arg_content.split(","):
+                if "=" in kv:
+                    k, v = kv.split("=", 1)
+                    k, v = k.strip(), v.strip()
+                    model_args[k] = v
+                    if k == "pretrained":
+                        pretrained = v
+        if arg.startswith("--num_fewshot"):
+            try:
+                evaluation["num_fewshot"] = int(arg.split()[-1])
+            except:
+                pass
 
     # Slugify pretrained path for filename
     model_slug = pretrained.strip("./").replace("/", "__")
@@ -124,6 +136,7 @@ def main():
     max_tokens = model_args.get("max_new_tokens")
     steps = model_args.get("steps")
     block_size = model_args.get("block_size")
+    threshold = model_args.get("threshold", 0.0)
     
     info_parts = []
     if temp != 0.0:
@@ -134,6 +147,19 @@ def main():
         info_parts.append(f"s{steps}")
     if block_size:
         info_parts.append(f"bs{block_size}")
+    
+    # New parameters for isolation
+    num_fewshot = evaluation.get("num_fewshot", 0)
+    if num_fewshot > 0:
+        info_parts.append(f"nf{num_fewshot}")
+    
+    threshold = model_args.get("threshold", 0.0)
+    try:
+        threshold = float(threshold)
+    except:
+        threshold = 0.0
+    if threshold > 0.0:
+        info_parts.append(f"th{threshold}")
     
     info_suffix = f"_{'_'.join(info_parts)}" if info_parts else ""
     
