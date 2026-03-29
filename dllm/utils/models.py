@@ -55,12 +55,24 @@ def get_model(
             bnb_4bit_quant_type="nf4",
         )
 
+    # Map dtype string to torch.dtype
+    torch_dtype = dtype
+    if isinstance(dtype, str):
+        if dtype == "bfloat16":
+            torch_dtype = torch.bfloat16
+        elif dtype == "float16":
+            torch_dtype = torch.float16
+        elif dtype == "float32":
+            torch_dtype = torch.float32
+
     params = {
-        "dtype": dtype,
+        "torch_dtype": torch_dtype,
         "device_map": device_map,
         "quantization_config": quant_config,
         "attn_implementation": attn_implementation,
         "config": config,
+        "low_cpu_mem_usage": True,
+        "trust_remote_code": True,
     }
 
     # Ensure local paths are recognized as such by transformers (starting with ./ or absolute)
@@ -90,6 +102,16 @@ def get_model(
     if base_model_path and not base_model_path.startswith("/"):
         if base_model_path.startswith(".") or os.path.isdir(base_model_path):
             base_model_path = os.path.abspath(base_model_path)
+
+    # Pre-fetch remote models on rank 0 to avoid race conditions and host RAM OOM
+    if base_model_path and not os.path.isdir(base_model_path) and not base_model_path.startswith(("/", ".")):
+        ps = accelerate.PartialState()
+        if ps.num_processes > 1:
+            if ps.is_main_process:
+                print_main(f"ℹ️ Rank 0 is pre-fetching remote model: {base_model_path}")
+                # Trigger download of config at least
+                transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
+            ps.wait_for_everyone()
 
     try:
         model = transformers.AutoModelForMaskedLM.from_pretrained(
@@ -171,6 +193,7 @@ def get_tokenizer(
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_name_or_path,
         padding_side="right",
+        trust_remote_code=True,
     )
 
     assert tokenizer.eos_token is not None or tokenizer.pad_token is not None
