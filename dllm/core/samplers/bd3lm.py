@@ -364,6 +364,10 @@ class BD3LMSampler(BaseSampler):
             # ======================================================
             # 3) Inner diffusion loop within the current block
             # ======================================================
+            # Initialize hidden states for loopholing memory across refinement steps
+            h_t = None
+            h_t_uncond = None
+
             for i_step in range(effective_steps):
                 x_block = x[:, T_prefix:T_total]  # [B, cur_block_len]
                 mask_block = x_block == mask_id
@@ -371,26 +375,40 @@ class BD3LMSampler(BaseSampler):
                 if not mask_block.any():
                     break
 
+                # Use loopholing if available in model config
+                use_loopholing = getattr(self.model.config, "use_loopholing", False)
+
                 # ---- Conditional logits for current block ----
-                cond_logits_block = self.model(
+                m_out = self.model(
                     x_block,
                     attention_mask=attn_block,
                     position_ids=pos_block,
                     past_key_values=copy.deepcopy(cond_past),
                     use_cache=False,
-                ).logits  # [B, cur_block_len, V]
-
+                    h_t=h_t
+                )
+                cond_logits_block = m_out.logits
                 logits_block = cond_logits_block
+
+                # Update h_t
+                if use_loopholing:
+                    h_t = getattr(m_out, "h_s", None)
 
                 # ---- Optional CFG ----
                 if cfg_scale > 0.0:
-                    un_logits_block = self.model(
+                    un_m_out = self.model(
                         x_block,
                         attention_mask=attn_block,
                         position_ids=pos_block,
                         past_key_values=copy.deepcopy(uncond_past),
                         use_cache=False,
-                    ).logits  # [B, cur_block_len, V]
+                        h_t=h_t_uncond
+                    )
+                    un_logits_block = un_m_out.logits
+
+                    # Update h_t_uncond
+                    if use_loopholing:
+                        h_t_uncond = getattr(un_m_out, "h_s", None)
 
                     logits_block = un_logits_block + (cfg_scale + 1.0) * (
                         cond_logits_block - un_logits_block

@@ -124,13 +124,21 @@ def get_model(
         print_main(f"ℹ️ Loading PEFT adapter from: {model_name_or_path}")
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, model_name_or_path)
+        # Sync after heavy PEFT loading
+        ps = accelerate.PartialState()
+        if ps.num_processes > 1:
+            ps.wait_for_everyone()
+        print_main("✅ PEFT adapter loaded successfully.")
 
     # --- if quantized, prepare for LoRA / QLoRA training ---
     if load_in_4bit and quant_config is not None:
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)
 
-    # Optionally train with lora
-    model = load_peft(model, model_args)
+    # Optionally train with lora: Only if we haven't already loaded a PEFT model
+    if not is_peft:
+        model = load_peft(model, model_args)
+    else:
+        print_main("ℹ️ Skipping load_peft because model was already loaded from PEFT checkpoint.")
 
     if getattr(model_args, "lora", False) and not load_in_4bit:
         # Avoid the error: element 0 of tensors does not require grad and does not have a grad_fn

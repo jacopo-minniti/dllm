@@ -167,23 +167,51 @@ class MDLMSampler(BaseSampler):
             effective_steps = num_transfer_tokens.size(1)
 
             # ----- Iterative reveal inside the current block -----
+            # Initialize hidden states for loopholing memory across refinement steps
+            h_t = None
+            h_t_uncond = None
+
             for i in range(effective_steps):
                 mask_index = x == mask_id  # current global mask map
 
-                # Optional CFG: second forward where original prompt tokens are masked out
+                # ----- Forward pass (+ optional CFG) -----
+                # Use loopholing if available in model config
+                use_loopholing = getattr(self.model.config, "use_loopholing", False)
+
                 if cfg_scale > 0.0:
                     un_x = x.clone()
                     un_x[unmasked_index] = mask_id
                     x_ = torch.cat([x, un_x], dim=0)
-                    logits = self.model(
-                        x_, attention_mask=attention_mask.repeat(2, 1)
-                    ).logits
+
+                    # Handle h_t carrying for CFG
+                    h_t_batch = None
+                    if use_loopholing and h_t is not None:
+                        # We carry both conditional and unconditional hidden states
+                        h_t_batch = torch.cat([h_t, h_t_uncond], dim=0)
+
+                    # Forward pass
+                    m_out = self.model(
+                        x_, attention_mask=attention_mask.repeat(2, 1), h_t=h_t_batch
+                    )
+                    logits = m_out.logits
                     logits, un_logits = torch.chunk(logits, 2, dim=0)
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+
+                    # Update h_t and h_t_uncond
+                    if use_loopholing:
+                        h_s = getattr(m_out, "h_s", None)
+                        if h_s is not None:
+                            h_t, h_t_uncond = torch.chunk(h_s, 2, dim=0)
                 else:
-                    logits = self.model(
-                        x, attention_mask=attention_mask
-                    ).logits  # Use attention mask here
+                    # Forward pass
+                    m_out = self.model(
+                        x, attention_mask=attention_mask, h_t=h_t
+                    )
+                    logits = m_out.logits
+
+                    # Update h_t
+                    if use_loopholing:
+                        h_t = getattr(m_out, "h_s", None)
 
                 if suppress_tokens is not None and len(suppress_tokens) > 0:
                     for token_id in suppress_tokens:
@@ -383,23 +411,48 @@ class MDLMSampler(BaseSampler):
             # Some blocks may have no masks => effective_steps == 0
             effective_steps = num_transfer_tokens.size(1)
 
+            # Initialize hidden states for loopholing memory across refinement steps
+            h_t = None
+            h_t_uncond = None
+
             for s in range(effective_steps):
                 mask_index_full = x == mask_id
 
                 # ----- Forward pass (+ optional CFG) -----
+                # Use loopholing if available in model config
+                use_loopholing = getattr(self.model.config, "use_loopholing", False)
+
                 if cfg_scale > 0.0:
                     un_x = x.clone()
                     un_x[unmasked_index] = mask_id
                     x_ = torch.cat([x, un_x], dim=0)
-                    logits = self.model(
-                        x_, attention_mask=attention_mask.repeat(2, 1)
-                    ).logits
+
+                    # Handle h_t carrying for CFG
+                    h_t_batch = None
+                    if use_loopholing and h_t is not None:
+                        h_t_batch = torch.cat([h_t, h_t_uncond], dim=0)
+
+                    m_out = self.model(
+                        x_, attention_mask=attention_mask.repeat(2, 1), h_t=h_t_batch
+                    )
+                    logits = m_out.logits
                     logits, un_logits = torch.chunk(logits, 2, dim=0)
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+
+                    # Update h_t and h_t_uncond
+                    if use_loopholing:
+                        h_s = getattr(m_out, "h_s", None)
+                        if h_s is not None:
+                            h_t, h_t_uncond = torch.chunk(h_s, 2, dim=0)
                 else:
-                    logits = self.model(
-                        x, attention_mask=attention_mask
-                    ).logits  # Use attention mask here
+                    m_out = self.model(
+                        x, attention_mask=attention_mask, h_t=h_t
+                    )
+                    logits = m_out.logits
+
+                    # Update h_t
+                    if use_loopholing:
+                        h_t = getattr(m_out, "h_s", None)
 
                 if suppress_tokens is not None and len(suppress_tokens) > 0:
                     for token_id in suppress_tokens:
