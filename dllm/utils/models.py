@@ -208,9 +208,22 @@ def get_tokenizer(
     # If model is not provided, return as-is
     model_cfg = transformers.AutoConfig.from_pretrained(model_name_or_path)
     model_cls = transformers.AutoModel._model_mapping[type(model_cfg)]
+    # Identify model family to apply specific tokenizer customizations
+    model_type = getattr(model_cfg, "model_type", None)
 
     # ---------------- Model-specific customization ----------------
-    if issubclass(model_cls, LLaDAModelLM):
+    if tokenizer.mask_token is None:
+        # Check if the config specified a mask_token_id we can resolve
+        if hasattr(model_cfg, "mask_token_id") and model_cfg.mask_token_id is not None:
+            try:
+                # If we have the ID, try to find the corresponding token string
+                potential_mask = tokenizer.convert_ids_to_tokens(model_cfg.mask_token_id)
+                if potential_mask and potential_mask not in [tokenizer.unk_token, tokenizer.pad_token]:
+                    tokenizer.mask_token = potential_mask
+            except:
+                pass
+
+    if tokenizer.mask_token is None and (model_type == "llada" or issubclass(model_cls, LLaDAModelLM)):
         tokenizer.add_special_tokens({"mask_token": "<|mdm_mask|>"})
         tokenizer.eot_token = "<|eot_id|>"
         # tokenizer.eot_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eot_token) # can not do this for llada base directly
@@ -229,7 +242,7 @@ def get_tokenizer(
 
 {% endif %}
 """
-    elif issubclass(model_cls, (LLaDAMoEModelLM, LLaDA2MoeModelLM)):
+    elif tokenizer.mask_token is None and (model_type in ["llada_moe", "llada2_moe"] or issubclass(model_cls, (LLaDAMoEModelLM, LLaDA2MoeModelLM))):
         tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
         tokenizer.eot_token = "<|role_end|>"
         tokenizer.eot_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eot_token)
