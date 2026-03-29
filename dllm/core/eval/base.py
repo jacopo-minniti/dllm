@@ -88,6 +88,11 @@ class BaseEvalHarness(LM):
         # ── Model + tokenizer + sampler ──────────────────────────
         if "pretrained" in kwargs:
             kwargs.setdefault("model_name_or_path", kwargs["pretrained"])
+        
+        # Default to merging LoRA for eval speed unless explicitly disabled
+        if "merge_lora" not in kwargs and (model_args is None or not hasattr(model_args, "merge_lora")):
+            kwargs["merge_lora"] = True
+            
         self.model_args = self._build_config(ModelArguments, model_args, kwargs)
         self.model = get_model(
             self.model_args,

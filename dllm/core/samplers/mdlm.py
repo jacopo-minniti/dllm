@@ -30,6 +30,8 @@ class MDLMSamplerConfig(BaseSamplerConfig):
     suppress_tokens: list[int] | None = None
     begin_suppress_tokens: list[int] | None = None
     right_shift_logits: bool = False
+    threshold: float = 0.0  # PUMA threshold (0.0 means use fixed steps/scheduler)
+    confidence_type: str = "top_prob"  # "top_prob", "entropy", "prob_diff"
 
 
 @dataclass
@@ -76,12 +78,15 @@ class MDLMSampler(BaseSampler):
         begin_suppress_tokens = kwargs.get(
             "begin_suppress_tokens", config.begin_suppress_tokens
         )
+        threshold = kwargs.get("threshold", config.threshold)
+        confidence_type = kwargs.get("confidence_type", config.confidence_type)
 
         # Logging for confidence-based unmasking confirmation
         print(f"--- Sampling Configuration ---")
         print(f"Steps: {steps}, Max New Tokens: {max_new_tokens}, Block Size: {block_size}")
         print(f"Temperature: {temperature}, Remasking: {remasking}")
         print(f"CFG Scale: {cfg_scale}, Stochastic Transfer: {stochastic_transfer}")
+        print(f"PUMA Threshold: {threshold}, Confidence Type: {confidence_type}")
         print(f"------------------------------")
 
         assert 1 <= block_size
@@ -157,50 +162,48 @@ class MDLMSampler(BaseSampler):
                     )  # which positions in this block are still masked
 
             # Decide how many tokens to reveal per step in this block
-            num_transfer_tokens = get_num_transfer_tokens(
-                mask_index=block_mask_index,
-                steps=steps,
-                scheduler=self.scheduler,
-                stochastic=stochastic_transfer,
-            )
-
-            # Some steps may be skipped if there are no transfers
-            effective_steps = num_transfer_tokens.size(1)
+            if threshold <= 0:
+                num_transfer_tokens = get_num_transfer_tokens(
+                    mask_index=block_mask_index,
+                    steps=steps,
+                    scheduler=self.scheduler,
+                    stochastic=stochastic_transfer,
+                )
+                # Some steps may be skipped if there are no transfers
+                effective_steps = num_transfer_tokens.size(1)
+            else:
+                num_transfer_tokens = None
+                effective_steps = steps
 
             # ----- Iterative reveal inside the current block -----
             # Initialize hidden states for loopholing memory across refinement steps
             h_t = None
             h_t_uncond = None
 
+            # Robust check for h_t support in model signature (Outside the step loop for speed)
+            forward_params = getattr(self, "_forward_params", None)
+            if forward_params is None:
+                # Resolve base model signature (handles PeftModel and other wrappers)
+                model_to_inspect = self.model
+                if hasattr(model_to_inspect, "get_base_model"): 
+                    model_to_inspect = model_to_inspect.get_base_model()
+                
+                self._forward_params = inspect.signature(model_to_inspect.forward).parameters
+                forward_params = self._forward_params
+            
+            can_use_h_t = "h_t" in forward_params
+            use_loopholing = getattr(self.model.config, "use_loopholing", False)
+
             for i in range(effective_steps):
-                mask_index = x == mask_id  # current global mask map
-
-                # ----- Forward pass (+ optional CFG) -----
-                # Use loopholing if available in model config
-                use_loopholing = getattr(self.model.config, "use_loopholing", False)
-
-                if cfg_scale > 0.0:
-                    un_x = x.clone()
-                    un_x[unmasked_index] = mask_id
-                    x_ = torch.cat([x, un_x], dim=0)
-
-                # Handle h_t carrying for CFG
-                h_t_batch = None
+                # Update mask_index within this block for this specific step
+                mask_index = (x[:, :T] == mask_id) & attention_mask.bool()
+                # within current block range
+                block_start = max(0, min(prompt_lens) + b * block_size)
+                # Actually we can just check if any masks are left in the whole sequence 
+                # but we focus on unmasking the currently targeted area.
                 
-                # Robust check for h_t support in model signature
-                forward_params = getattr(self, "_forward_params", None)
-                if forward_params is None:
-                    # Peeling back PeftModel to check base model signature if needed
-                    base_model = self.model
-                    if hasattr(base_model, "compute_logits"): # Some wrappers
-                        base_model = base_model
-                    elif hasattr(base_model, "base_model") and hasattr(base_model.base_model, "model"):
-                        base_model = base_model.base_model.model
-                    
-                    self._forward_params = inspect.signature(self.model.forward).parameters
-                    forward_params = self._forward_params
-                
-                can_use_h_t = "h_t" in forward_params
+                if not mask_index.any():
+                    break
 
                 if cfg_scale > 0.0:
                     un_x = x.clone()
@@ -256,18 +259,22 @@ class MDLMSampler(BaseSampler):
                     for token_id in begin_suppress_tokens:
                         logits[:, :, token_id] = -torch.inf
 
-                # Per-position confidence used to pick which masks to commit this step
-                if remasking == "low_confidence":
-                    p = F.softmax(logits, dim=-1)
-                    x0_p = torch.squeeze(
-                        torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1
-                    )  # [B, T] confidence of predicted token
-                elif remasking == "random":
-                    x0_p = torch.rand(
-                        (x0.shape[0], x0.shape[1]), device=x0.device
-                    )  # random scores
+                # Per-position confidence/uncertainty
+                p = F.softmax(logits, dim=-1)
+                if confidence_type == "top_prob":
+                    x0_p = torch.gather(p, dim=-1, index=x0.unsqueeze(-1)).squeeze(-1)
+                    uncertainty = 1.0 - x0_p
+                elif confidence_type == "prob_diff":
+                    top2_probs, _ = torch.topk(p, k=2, dim=-1)
+                    conf = top2_probs[..., 0] - top2_probs[..., 1]
+                    x0_p = conf
+                    uncertainty = 1.0 - conf
+                elif confidence_type == "entropy":
+                    ent = -torch.sum(p * torch.log(p + 1e-10), dim=-1)
+                    x0_p = -ent # confidence is inverse entropy for topk
+                    uncertainty = ent
                 else:
-                    raise NotImplementedError(remasking)
+                    raise NotImplementedError(confidence_type)
 
                 # Restrict selection window to the *current block's* tail region
                 for j in range(B):
@@ -279,15 +286,35 @@ class MDLMSampler(BaseSampler):
                     mask_index, x0_p, -np.inf
                 )  # consider masked positions only
 
-                # Pick exactly `num_transfer_tokens[j, i]` highest-confidence positions per sample
-                transfer_index = torch.zeros_like(
-                    x0, dtype=torch.bool, device=x0.device
-                )
-                for j in range(confidence.shape[0]):
-                    _, select_index = torch.topk(
-                        confidence[j], k=num_transfer_tokens[j, i]
-                    )
-                    transfer_index[j, select_index] = True
+                # Pick which positions to commit
+                transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
+                
+                for j in range(B):
+                    if threshold > 0:
+                        # PUMA dynamic budgeting: cumulative uncertainty threshold
+                        u_j = uncertainty[j][mask_index[j]]
+                        if u_j.numel() == 0:
+                            continue
+                            
+                        # Sort by uncertainty (low to high = high confidence first)
+                        vals, sort_idx = torch.sort(u_j, descending=False)
+                        original_idxs = torch.where(mask_index[j])[0][sort_idx]
+                        
+                        cum_uncertainty = torch.cumsum(vals, dim=-1)
+                        unmask_sub_idx = cum_uncertainty < threshold
+                        
+                        # Always unmask at least one token if we haven't reached the end
+                        if not unmask_sub_idx.any():
+                            unmask_sub_idx[0] = True
+                            
+                        to_unmask = original_idxs[unmask_sub_idx]
+                        transfer_index[j, to_unmask] = True
+                    else:
+                        # Fixed budget scheduling (Standard LLaDA)
+                        k = num_transfer_tokens[j, i]
+                        if k > 0:
+                            _, select_index = torch.topk(confidence[j], k=k)
+                            transfer_index[j, select_index] = True
 
                 # Commit chosen predictions into the canvas
                 x[transfer_index] = x0[transfer_index]
@@ -441,27 +468,19 @@ class MDLMSampler(BaseSampler):
             h_t = None
             h_t_uncond = None
 
+            # Robust check for h_t support in model signature (Outside the step loop for speed)
+            forward_params = getattr(self, "_forward_params", None)
+            if forward_params is None:
+                # Resolve base model signature (handles PeftModel and other wrappers)
+                model_to_inspect = self.model
+                if hasattr(model_to_inspect, "get_base_model"): 
+                    model_to_inspect = model_to_inspect.get_base_model()
+                
+                self._forward_params = inspect.signature(model_to_inspect.forward).parameters
             for s in range(effective_steps):
-                mask_index_full = x == mask_id
-
-                # ----- Forward pass (+ optional CFG) -----
-                # Use loopholing if available in model config
-                use_loopholing = getattr(self.model.config, "use_loopholing", False)
-
-                if cfg_scale > 0.0:
-                    un_x = x.clone()
-                    un_x[unmasked_index] = mask_id
-                    x_ = torch.cat([x, un_x], dim=0)
 
                 # Handle h_t carrying for CFG
                 h_t_batch = None
-                
-                forward_params = getattr(self, "_forward_params", None)
-                if forward_params is None:
-                    self._forward_params = inspect.signature(self.model.forward).parameters
-                    forward_params = self._forward_params
-                
-                can_use_h_t = "h_t" in forward_params
 
                 if cfg_scale > 0.0:
                     un_x = x.clone()

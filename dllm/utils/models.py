@@ -162,6 +162,15 @@ def get_model(
                 output.requires_grad_(True)
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 
+    # Optionally merge LoRA weights for inference speedups
+    if is_peft and getattr(model_args, "merge_lora", False):
+        print_main("ℹ️ Merging LoRA weights for faster inference...")
+        try:
+            model = model.merge_and_unload()
+            print_main("✅ LoRA weights merged successfully.")
+        except Exception as e:
+            print_main(f"⚠️ Failed to merge LoRA weights: {e}")
+
     return model
 
 

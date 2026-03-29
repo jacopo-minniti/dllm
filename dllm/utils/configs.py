@@ -23,6 +23,7 @@ class ModelArguments:
     bias: str = "none"
     modules_to_save: str = None
     eval_checkpoint: str = None
+    merge_lora: bool = False
 
     def __post_init__(self):
         self.model_name_or_path = resolve_with_base_env(
