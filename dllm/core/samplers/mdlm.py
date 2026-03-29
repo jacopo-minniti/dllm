@@ -3,6 +3,7 @@ reference: https://github.com/ML-GSAI/LLaDA/blob/main/generate.py
 """
 
 import math
+import inspect
 from dataclasses import dataclass
 
 import numpy as np
@@ -183,34 +184,59 @@ class MDLMSampler(BaseSampler):
                     un_x[unmasked_index] = mask_id
                     x_ = torch.cat([x, un_x], dim=0)
 
-                    # Handle h_t carrying for CFG
-                    h_t_batch = None
-                    if use_loopholing and h_t is not None:
+                # Handle h_t carrying for CFG
+                h_t_batch = None
+                
+                # Robust check for h_t support in model signature
+                forward_params = getattr(self, "_forward_params", None)
+                if forward_params is None:
+                    # Peeling back PeftModel to check base model signature if needed
+                    base_model = self.model
+                    if hasattr(base_model, "compute_logits"): # Some wrappers
+                        base_model = base_model
+                    elif hasattr(base_model, "base_model") and hasattr(base_model.base_model, "model"):
+                        base_model = base_model.base_model.model
+                    
+                    self._forward_params = inspect.signature(self.model.forward).parameters
+                    forward_params = self._forward_params
+                
+                can_use_h_t = "h_t" in forward_params
+
+                if cfg_scale > 0.0:
+                    un_x = x.clone()
+                    un_x[unmasked_index] = mask_id
+                    x_ = torch.cat([x, un_x], dim=0)
+
+                    if use_loopholing and h_t is not None and can_use_h_t:
                         # We carry both conditional and unconditional hidden states
                         h_t_batch = torch.cat([h_t, h_t_uncond], dim=0)
 
                     # Forward pass
-                    m_out = self.model(
-                        x_, attention_mask=attention_mask.repeat(2, 1), h_t=h_t_batch
-                    )
+                    fwd_kwargs = {"input_ids": x_, "attention_mask": attention_mask.repeat(2, 1)}
+                    if can_use_h_t:
+                        fwd_kwargs["h_t"] = h_t_batch
+                        
+                    m_out = self.model(**fwd_kwargs)
                     logits = m_out.logits
                     logits, un_logits = torch.chunk(logits, 2, dim=0)
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
 
                     # Update h_t and h_t_uncond
-                    if use_loopholing:
+                    if use_loopholing and can_use_h_t:
                         h_s = getattr(m_out, "h_s", None)
                         if h_s is not None:
                             h_t, h_t_uncond = torch.chunk(h_s, 2, dim=0)
                 else:
                     # Forward pass
-                    m_out = self.model(
-                        x, attention_mask=attention_mask, h_t=h_t
-                    )
+                    fwd_kwargs = {"input_ids": x, "attention_mask": attention_mask}
+                    if can_use_h_t:
+                        fwd_kwargs["h_t"] = h_t
+                        
+                    m_out = self.model(**fwd_kwargs)
                     logits = m_out.logits
 
                     # Update h_t
-                    if use_loopholing:
+                    if use_loopholing and can_use_h_t:
                         h_t = getattr(m_out, "h_s", None)
 
                 if suppress_tokens is not None and len(suppress_tokens) > 0:
@@ -427,31 +453,48 @@ class MDLMSampler(BaseSampler):
                     un_x[unmasked_index] = mask_id
                     x_ = torch.cat([x, un_x], dim=0)
 
-                    # Handle h_t carrying for CFG
-                    h_t_batch = None
-                    if use_loopholing and h_t is not None:
+                # Handle h_t carrying for CFG
+                h_t_batch = None
+                
+                forward_params = getattr(self, "_forward_params", None)
+                if forward_params is None:
+                    self._forward_params = inspect.signature(self.model.forward).parameters
+                    forward_params = self._forward_params
+                
+                can_use_h_t = "h_t" in forward_params
+
+                if cfg_scale > 0.0:
+                    un_x = x.clone()
+                    un_x[unmasked_index] = mask_id
+                    x_ = torch.cat([x, un_x], dim=0)
+
+                    if use_loopholing and h_t is not None and can_use_h_t:
                         h_t_batch = torch.cat([h_t, h_t_uncond], dim=0)
 
-                    m_out = self.model(
-                        x_, attention_mask=attention_mask.repeat(2, 1), h_t=h_t_batch
-                    )
+                    fwd_kwargs = {"input_ids": x_, "attention_mask": attention_mask.repeat(2, 1)}
+                    if can_use_h_t:
+                        fwd_kwargs["h_t"] = h_t_batch
+                        
+                    m_out = self.model(**fwd_kwargs)
                     logits = m_out.logits
                     logits, un_logits = torch.chunk(logits, 2, dim=0)
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
 
                     # Update h_t and h_t_uncond
-                    if use_loopholing:
+                    if use_loopholing and can_use_h_t:
                         h_s = getattr(m_out, "h_s", None)
                         if h_s is not None:
                             h_t, h_t_uncond = torch.chunk(h_s, 2, dim=0)
                 else:
-                    m_out = self.model(
-                        x, attention_mask=attention_mask, h_t=h_t
-                    )
+                    fwd_kwargs = {"input_ids": x, "attention_mask": attention_mask}
+                    if can_use_h_t:
+                        fwd_kwargs["h_t"] = h_t
+                        
+                    m_out = self.model(**fwd_kwargs)
                     logits = m_out.logits
 
                     # Update h_t
-                    if use_loopholing:
+                    if use_loopholing and can_use_h_t:
                         h_t = getattr(m_out, "h_s", None)
 
                 if suppress_tokens is not None and len(suppress_tokens) > 0:

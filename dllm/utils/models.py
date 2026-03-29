@@ -114,9 +114,17 @@ def get_model(
             ps.wait_for_everyone()
 
     try:
-        model = transformers.AutoModelForMaskedLM.from_pretrained(
-            base_model_path, **params
-        )
+        # Detect model type to force local implementation if it's LLaDA
+        # this ensures local features like loopholing (h_t) are available
+        check_config = config or transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
+        if getattr(check_config, "model_type", None) == "llada":
+             from dllm.pipelines.llada.models.modeling_llada import LLaDAModelLM
+             print_main("ℹ️ Forcing local LLaDAModelLM implementation for loopholing support.")
+             model = LLaDAModelLM.from_pretrained(base_model_path, **params)
+        else:
+             model = transformers.AutoModelForMaskedLM.from_pretrained(
+                 base_model_path, **params
+             )
     except Exception:
         model = transformers.AutoModel.from_pretrained(base_model_path, **params)
 

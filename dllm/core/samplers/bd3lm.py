@@ -3,7 +3,7 @@ reference: https://github.com/ML-GSAI/LLaDA/blob/main/generate.py
 """
 
 import copy
-import math
+import inspect
 from dataclasses import dataclass
 
 import torch
@@ -378,36 +378,50 @@ class BD3LMSampler(BaseSampler):
                 # Use loopholing if available in model config
                 use_loopholing = getattr(self.model.config, "use_loopholing", False)
 
+                # Robust check for h_t support
+                forward_params = getattr(self, "_forward_params", None)
+                if forward_params is None:
+                    self._forward_params = inspect.signature(self.model.forward).parameters
+                    forward_params = self._forward_params
+                
+                can_use_h_t = "h_t" in forward_params
+
                 # ---- Conditional logits for current block ----
-                m_out = self.model(
-                    x_block,
-                    attention_mask=attn_block,
-                    position_ids=pos_block,
-                    past_key_values=copy.deepcopy(cond_past),
-                    use_cache=False,
-                    h_t=h_t
-                )
+                fwd_kwargs = {
+                    "input_ids": x_block,
+                    "attention_mask": attn_block,
+                    "position_ids": pos_block,
+                    "past_key_values": copy.deepcopy(cond_past),
+                    "use_cache": False,
+                }
+                if can_use_h_t:
+                    fwd_kwargs["h_t"] = h_t
+                
+                m_out = self.model(**fwd_kwargs)
                 cond_logits_block = m_out.logits
                 logits_block = cond_logits_block
 
                 # Update h_t
-                if use_loopholing:
+                if use_loopholing and can_use_h_t:
                     h_t = getattr(m_out, "h_s", None)
 
                 # ---- Optional CFG ----
                 if cfg_scale > 0.0:
-                    un_m_out = self.model(
-                        x_block,
-                        attention_mask=attn_block,
-                        position_ids=pos_block,
-                        past_key_values=copy.deepcopy(uncond_past),
-                        use_cache=False,
-                        h_t=h_t_uncond
-                    )
+                    un_fwd_kwargs = {
+                        "input_ids": x_block,
+                        "attention_mask": attn_block,
+                        "position_ids": pos_block,
+                        "past_key_values": copy.deepcopy(uncond_past),
+                        "use_cache": False,
+                    }
+                    if can_use_h_t:
+                        un_fwd_kwargs["h_t"] = h_t_uncond
+                        
+                    un_m_out = self.model(**un_fwd_kwargs)
                     un_logits_block = un_m_out.logits
 
                     # Update h_t_uncond
-                    if use_loopholing:
+                    if use_loopholing and can_use_h_t:
                         h_t_uncond = getattr(un_m_out, "h_s", None)
 
                     logits_block = un_logits_block + (cfg_scale + 1.0) * (
