@@ -10,9 +10,6 @@ evaluation:
   num_fewshot: 4
   log_samples: true
   
-  # GSAI-ML/LLaDA-8B-Base
-  # .models/llada-lora-tulu3/lr2e-5_s42/checkpoint-1000
-  # .models/llada-lora-puma/lr2e-5_s42/checkpoint-400 
   model_args:
     pretrained: "GSAI-ML/LLaDA-8B-Base"
     dtype: "bfloat16"

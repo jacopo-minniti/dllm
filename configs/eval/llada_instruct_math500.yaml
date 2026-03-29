@@ -1,0 +1,30 @@
+# Evaluation Configuration
+evaluation:
+  script_path: "dllm/pipelines/llada/eval.py"
+  model: "llada"
+  tasks: "math500_reasoning"
+  batch_size: 1
+  device: "cuda"
+  output_path: "./.evals/llada_math500"
+  apply_chat_template: true
+  num_fewshot: 0
+  log_samples: true
+  
+  # GSAI-ML/LLaDA-8B-Instruct
+  # .models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000
+  # .models/llada-base-lora-puma/lr2e-5_s42/checkpoint-400 
+  model_args:
+    pretrained: ".models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000"
+    dtype: "bfloat16"
+    max_new_tokens: 256
+    steps: 256
+    block_size: 32
+    temperature: 1.0
+    remasking: "low_confidence"
+
+  # WandB tracking details (passed as comma-separated key=val)
+  # Project/Entity are picked up from environment variables (.env)
+  wandb_args:
+    name: "0"
+    group: "llada-lora-math500"
+    tags: "baseline evaluation"
