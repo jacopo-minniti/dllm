@@ -9,10 +9,10 @@ training:
   script_path: "examples/llada/sft.py"
   loss_type: "puma_bptt"
   lora: true
-  num_train_epochs: 4
+  num_train_epochs: 2
   learning_rate: 2e-5
-  per_device_train_batch_size: 4
-  gradient_accumulation_steps: 1
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 4
   dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:10000]"
   lr_scheduler_type: "linear"
   warmup_ratio: 0.1

@@ -13,10 +13,10 @@ evaluation:
   model_args:
     pretrained: "GSAI-ML/LLaDA-8B-Base"
     dtype: "bfloat16"
-    max_new_tokens: 256
-    steps: 256
+    max_new_tokens: 512
+    steps: 512
     block_size: 32
-    temperature: 1.0
+    temperature: 0.7
     remasking: "low_confidence"
 
   # WandB tracking details (passed as comma-separated key=val)

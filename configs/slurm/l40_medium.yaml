@@ -2,8 +2,8 @@
 job_name: "llada-eval"
 nodes: 1
 gpus_per_node: "l40s:4"
-time: "00:15:00"
-mem: "15G"
+time: "01:00:00"
+mem: "25G"
 cpus_per_task: 8
 ntasks_per_node: 1
 output: "./.logs/%x-%j.out"

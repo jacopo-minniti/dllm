@@ -6,21 +6,21 @@ evaluation:
   batch_size: 1
   device: "cuda"
   output_path: "./.evals/llada_math500"
-  apply_chat_template: true
-  num_fewshot: 0
+  apply_chat_template: false
+  num_fewshot: 4
   log_samples: true
   
   # GSAI-ML/LLaDA-8B-Instruct
   # .models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000
-  # .models/llada-base-lora-puma/lr2e-5_s42/checkpoint-400 
+  # .models/llada-base-lora-puma/lr2e-5_s42/checkpoint-400
   model_args:
-    pretrained: "GSAI-ML/LLaDA-8B-Instruct"
+    pretrained: ".models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000"
     dtype: "bfloat16"
-    max_new_tokens: 256
-    steps: 256
+    max_new_tokens: 512
+    steps: 512
     block_size: 32
-    temperature: 1.0
-    remasking: "low_confidence"
+    temperature: 0.7
+    threshold: 0.15
 
   # WandB tracking details (passed as comma-separated key=val)
   # Project/Entity are picked up from environment variables (.env)
