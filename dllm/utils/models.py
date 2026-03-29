@@ -63,20 +63,23 @@ def get_model(
         "config": config,
     }
 
+    # Ensure local paths are recognized as such by transformers (starting with ./ or absolute)
+    if model_name_or_path and not model_name_or_path.startswith("/"):
+        if model_name_or_path.startswith(".") or os.path.isdir(model_name_or_path):
+             model_name_or_path = os.path.abspath(model_name_or_path)
+
     # Detect if we are loading a PEFT checkpoint
     is_peft = False
     if model_name_or_path and os.path.isdir(model_name_or_path):
-        # Ensure local paths are treated as such by transformers (starting with ./ or absolute)
-        model_name_or_path = os.path.abspath(model_name_or_path)
-
         if os.path.exists(os.path.join(model_name_or_path, "adapter_config.json")):
             is_peft = True
             from peft import PeftConfig
             peft_config = PeftConfig.from_pretrained(model_name_or_path)
             base_model_path = peft_config.base_model_name_or_path
             # If base model is also a local path, make it absolute
-            if os.path.isdir(base_model_path):
-                base_model_path = os.path.abspath(base_model_path)
+            if base_model_path and not base_model_path.startswith("/"):
+                if base_model_path.startswith(".") or os.path.isdir(base_model_path):
+                    base_model_path = os.path.abspath(base_model_path)
             print_main(f"ℹ️ Detected PEFT checkpoint. Loading base model: {base_model_path}")
         else:
             base_model_path = model_name_or_path
@@ -84,8 +87,9 @@ def get_model(
         base_model_path = model_name_or_path
 
     # Final absolute path guarantee before calling transformers
-    if base_model_path and os.path.isdir(base_model_path):
-        base_model_path = os.path.abspath(base_model_path)
+    if base_model_path and not base_model_path.startswith("/"):
+        if base_model_path.startswith(".") or os.path.isdir(base_model_path):
+            base_model_path = os.path.abspath(base_model_path)
 
     try:
         model = transformers.AutoModelForMaskedLM.from_pretrained(
@@ -159,8 +163,9 @@ def get_tokenizer(
     )
 
     # Ensure local path is treated as such by transformers
-    if model_name_or_path and os.path.isdir(model_name_or_path):
-        model_name_or_path = os.path.abspath(model_name_or_path)
+    if model_name_or_path and not model_name_or_path.startswith("/"):
+        if model_name_or_path.startswith(".") or os.path.isdir(model_name_or_path):
+            model_name_or_path = os.path.abspath(model_name_or_path)
 
     # ---------------- Tokenizer loading ----------------
     tokenizer = transformers.AutoTokenizer.from_pretrained(
