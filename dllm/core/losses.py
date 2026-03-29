@@ -134,13 +134,13 @@ class LoopholingBPTTPumaLoss(nn.Module):
         self.confidence_type = confidence_type
         self.weighted_ce = weighted_ce
 
-    def forward(self, model, streaming_batch, **kwargs):
+    def forward(self, model, streaming_batch, slots: Optional[torch.Tensor] = None, **kwargs):
         total_loss = 0
         final_outputs = None
         
         # In PUMA BPTT, we unroll num_steps on the same buffer
         for t in range(self.num_steps):
-            batch = streaming_batch.get_batch()
+            batch = streaming_batch.get_batch(slots=slots)
             input_ids = batch["input_ids"].clone() # Clone to avoid in-place issues
             labels = batch["labels"]
             attention_mask = batch.get("attention_mask")
@@ -196,7 +196,8 @@ class LoopholingBPTTPumaLoss(nn.Module):
                 logits, 
                 threshold=self.threshold, 
                 confidence_type=self.confidence_type,
-                h_s=h_s_to_store
+                h_s=h_s_to_store,
+                slots=slots
             )
             
             if streaming_batch.is_finished():
