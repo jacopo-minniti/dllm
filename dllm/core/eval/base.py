@@ -124,6 +124,26 @@ class BaseEvalHarness(LM):
         else:
             self.batch_size = int(batch_size)
 
+    def all_gather(self, tensor):
+        """All-gather a tensor across ranks using accelerate."""
+        if self.accelerator is not None:
+            return self.accelerator.gather(tensor)
+        return tensor
+
+    def gather_object(self, obj, dst=0):
+        """Gather a Python object to dst rank using dist.all_gather_object."""
+        import torch.distributed as dist
+        if dist.is_initialized():
+            output = [None for _ in range(self.world_size)]
+            dist.all_gather_object(output, obj)
+            return output
+        return [obj]
+
+    def barrier(self):
+        """Synchronization barrier using accelerate."""
+        if self.accelerator is not None:
+            self.accelerator.wait_for_everyone()
+
     @property
     def rank(self) -> int:
         return self._rank
