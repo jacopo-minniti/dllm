@@ -28,3 +28,4 @@ training:
   # Intervention Settings
   puma_threshold: 0.15
   bptt_steps: 2
+  use_loopholing: true

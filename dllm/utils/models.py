@@ -73,6 +73,7 @@ def get_model(
         "config": config,
         "low_cpu_mem_usage": True,
         "trust_remote_code": True,
+        "use_loopholing": getattr(model_args, "use_loopholing", False),
     }
 
     # Ensure local paths are recognized as such by transformers (starting with ./ or absolute)

@@ -190,7 +190,7 @@ class LoopholingBPTTPumaLoss(nn.Module):
             # But the LAST step of the loop must detach if it is to be persisted for the NEXT global training call.
             # We pass detach=True for the last step.
             is_last_step = (t == self.num_steps - 1)
-            h_s_to_store = h_s.detach() if is_last_step else h_s
+            h_s_to_store = h_s.detach() if (h_s is not None and is_last_step) else h_s
             
             streaming_batch.update(
                 logits, 
