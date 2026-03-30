@@ -1,5 +1,6 @@
 # Evaluation Configuration
 evaluation:
+  seed: 0
   script_path: "dllm/pipelines/llada/eval.py"
   model: "llada"
   tasks: "math500_reasoning"
@@ -10,21 +11,24 @@ evaluation:
   num_fewshot: 4
   log_samples: true
   
-  # GSAI-ML/LLaDA-8B-Instruct
-  # .models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000
-  # .models/llada-base-lora-puma/lr2e-5_s42/checkpoint-400
   model_args:
-    pretrained: ".models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000"
+    # GSAI-ML/LLaDA-8B-Instruct
+    # .models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000
+    # .models/llada-base-lora-puma/lr2e-5_s42/checkpoint-400
+    # .models/llada-lora-puma-bptt/lr2e-5_s42/checkpoint-500
+    pretrained: ".models/llada-lora-puma-bptt/lr2e-5_s42/checkpoint-500"
     dtype: "bfloat16"
     max_new_tokens: 512
     steps: 512
     block_size: 32
     temperature: 0.7
     threshold: 0.15
+    # --- BPTT / Loopholing optimization ---
+    use_loopholing: true  # Essential for BPTT models
+    lora: true           # Ensure lora loading is active
+    merge_lora: true      # Significant speedup for inference
 
-  # WandB tracking details (passed as comma-separated key=val)
-  # Project/Entity are picked up from environment variables (.env)
   wandb_args:
-    name: "0"
+    name: "puma-bptt-math500"
     group: "llada-lora-math500"
     tags: "baseline evaluation"

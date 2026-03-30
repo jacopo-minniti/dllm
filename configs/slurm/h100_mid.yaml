@@ -1,9 +1,9 @@
 # Slurm Resource Requests
-job_name: "test"
+job_name: "llada-eval"
 nodes: 1
-gpus_per_node: "l40s:1"
-time: "00:10:00"
-mem: "10G"
+gpus_per_node: "h100:2"
+time: "01:30:00"
+mem: "50G"
 cpus_per_task: 16
 ntasks_per_node: 1
 output: "./.logs/%x-%j.out"
