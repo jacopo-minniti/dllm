@@ -9,6 +9,7 @@ accelerate launch \
     --model_args "pretrained=GSAI-ML/LLaDA-8B-Instruct,max_new_tokens=512,steps=512,block_size=512,cfg_scale=0.0"
 """
 
+import sys
 from dataclasses import dataclass
 
 from lm_eval.__main__ import cli_evaluate
@@ -16,6 +17,7 @@ from lm_eval.api.registry import register_model
 
 from dllm.core.eval import MDLMEvalConfig, MDLMEvalHarness
 from dllm.core.samplers import MDLMSampler, MDLMSamplerConfig
+from dllm.utils.utils import seed_everything
 
 
 @dataclass
@@ -57,4 +59,18 @@ class LLaDAEvalHarness(MDLMEvalHarness):
 
 
 if __name__ == "__main__":
+    # Pre-parse seed for process-wide determinism (cudnn, hashseed, etc.)
+    eval_seed = 42
+    for i, arg in enumerate(sys.argv):
+        if arg == "--seed" and i + 1 < len(sys.argv):
+            try:
+                # Support both --seed 42 and --seed 42,42,42,42
+                val = sys.argv[i+1].split(",")[0]
+                if val.lower() != "none":
+                    eval_seed = int(val)
+            except (ValueError, IndexError):
+                pass
+            break
+    
+    seed_everything(eval_seed)
     cli_evaluate()

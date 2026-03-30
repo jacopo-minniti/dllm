@@ -15,6 +15,8 @@ import accelerate
 import peft
 import torch
 import transformers
+import random
+import numpy as np
 
 
 def resolve_with_base_env(path: str, env_name: str) -> str:
@@ -175,12 +177,32 @@ def disable_dataset_progress_bar_except_main():
         disable_progress_bar()
 
 
+def seed_everything(seed: int):
+    """
+    Comprehensive seeding for Python, NumPy, and PyTorch.
+    Follows the requested pattern for maximum determinism.
+    """
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    # makes CuDNN / some kernels deterministic (can reduce speed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    # Also call transformers.set_seed for its internal logic (like TF if present)
+    transformers.set_seed(seed)
+
+
 def initial_training_setup(
     model_args: "ModelArguments",
     data_args: "DataArguments",
     training_args: "TrainingArguments",
 ):
-    transformers.set_seed(training_args.seed)
+    seed_everything(training_args.seed)
     disable_caching_allocator_warmup()
     disable_dataset_progress_bar_except_main()
     if getattr(data_args, "disable_caching", False):

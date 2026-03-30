@@ -170,21 +170,29 @@ def main():
         threshold = float(threshold)
     except:
         threshold = 0.0
-    if threshold > 0.0:
+        
+    is_puma = "puma" in model_path.lower() or "puma" in checkpoint_name.lower()
+    if threshold > 0.0 and is_puma:
         info_parts.append(f"th{threshold}")
     
     params_str = "_".join(info_parts) if info_parts else "default"
     
-    # Restructured storage: .evals/<task>/<model>/<checkpoint>/<params>.jsonl
+    # Restructured storage: .evals/<task>/<model>/<checkpoint>/<params>
     cache_dir = os.path.join(".evals", tasks_str, model_slug, checkpoint_name)
     os.makedirs(cache_dir, exist_ok=True)
     auto_checkpoint = os.path.join(cache_dir, f"{params_str}.jsonl")
+    
+    # Force output_path to match our structured cache_dir to avoid scattered results
+    evaluation["output_path"] = cache_dir
+    print(f"📦 Automatic output_path (results/samples): {cache_dir}")
     
     if "eval_checkpoint" not in model_args:
         model_args["eval_checkpoint"] = auto_checkpoint
         print(f"📦 Automatic eval_checkpoint: {auto_checkpoint}")
 
-    eval_flags = []
+    # ── Determinism ──────────────────────────────────────────
+    seed = evaluation.get("seed", 42)
+    eval_flags = [f"--seed {seed}"]
     
     # Handle remaining dict-based args (model_args, gen_kwargs)
     # Re-inject updated model_args back into evaluation if needed
