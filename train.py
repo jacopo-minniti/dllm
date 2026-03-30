@@ -27,9 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description="Central Training Launcher for dLLM")
     
     # Core Config Paths
-    parser.add_argument("--run_config", 
-                        default="lora_baseline",
-                        help="Name or path of training/wandb configuration YAML")
+    parser.add_argument("run_config", help="Name or path of training/wandb configuration YAML")
     parser.add_argument("--slurm_config", 
                         default="default",
                         help="Name or path of Slurm resource configuration YAML")
