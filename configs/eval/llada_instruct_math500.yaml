@@ -16,7 +16,7 @@ evaluation:
     # .models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000
     # .models/llada-base-lora-puma/lr2e-5_s42/checkpoint-400
     # .models/llada-lora-puma-bptt/lr2e-5_s42/checkpoint-500
-    pretrained: ".models/llada-lora-puma-bptt/lr2e-5_s42/checkpoint-500"
+    pretrained: ".models/llada-lora-puma-bptt/lr2e-5_s42/checkpoint-1000"
     dtype: "bfloat16"
     max_new_tokens: 512
     steps: 512
