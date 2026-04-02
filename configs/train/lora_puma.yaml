@@ -17,7 +17,7 @@ training:
   lr_scheduler_type: "linear"
   warmup_ratio: 0.1
   logging_steps: 10
-  save_steps: 200
+  save_steps: 100
   eval_steps: 100
   bf16: true
   gradient_checkpointing: true
