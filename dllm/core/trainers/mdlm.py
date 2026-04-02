@@ -89,16 +89,20 @@ class MDLMTrainer(transformers.Trainer):
         self.active_streaming_batch = None
         # Ensure loopholing is enabled on the model if needed by the loss function
         if "bptt" in args.loss_type:
-             use_loopholing = False
+             use_state = False
+             model_config = None
              if hasattr(self.model, "config"):
-                  use_loopholing = getattr(self.model.config, "use_loopholing", False)
+                  model_config = self.model.config
              elif hasattr(self.model, "model") and hasattr(self.model.model, "config"):
-                  use_loopholing = getattr(self.model.model.config, "use_loopholing", False)
+                  model_config = self.model.model.config
              
-             if not use_loopholing:
+             if model_config is not None:
+                  use_state = getattr(model_config, "use_loopholing", False) or getattr(model_config, "use_cab", False)
+             
+             if not use_state:
                   raise ValueError(
-                      f"Loss function '{args.loss_type}' requires loopholing support. "
-                      "Please enable it by adding '--use_loopholing True' to your launch command."
+                      f"Loss function '{args.loss_type}' requires state persistence support (Loopholing or CAB). "
+                      "Please enable one of them by adding '--use_loopholing True' or '--use_cab True' to your launch command."
                   )
 
         # Check for potential NCCL timeouts in distributed training with PUMA
