@@ -34,6 +34,7 @@ def main():
     parser.add_argument("run_config", help="Name or path of evaluation configuration")
     parser.add_argument("--slurm_config", required=True, help="Name or path of Slurm resource configuration")
     parser.add_argument("--accelerate_config", default="ddp", help="Name of accelerate config (located in configs/accelerate/)")
+    parser.add_argument("--job_name", default="dllm", help="Slurm job name")
     
     # Collect remaining args to pass directly to the eval script
     args, extra_args = parser.parse_known_args()
@@ -53,6 +54,9 @@ def main():
             slurm_cfg = yaml.safe_load(f) or {}
         except yaml.YAMLError:
             slurm_cfg = {}
+    
+    # 1a. Set default job name or override from CLI
+    slurm_cfg["job_name"] = args.job_name
 
     # 2. Extract Slurm Directives
     slurm_directives = ["#!/bin/bash"]

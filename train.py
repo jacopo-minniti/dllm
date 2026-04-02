@@ -34,6 +34,9 @@ def main():
     parser.add_argument("--accelerate_config", 
                         default="fsdp", 
                         help="Name of accelerate config (located in configs/accelerate/)")
+    parser.add_argument("--job_name", 
+                        default="dllm", 
+                        help="Slurm job name")
     
     # Collect remaining args to pass directly to training script
     args, extra_args = parser.parse_known_args()
@@ -47,6 +50,9 @@ def main():
         run_cfg = yaml.safe_load(f)
     with open(args.slurm_config, 'r') as f:
         slurm_cfg = yaml.safe_load(f)
+
+    # 1a. Set default job name or override from CLI
+    slurm_cfg["job_name"] = args.job_name
 
     # 1b. Handle CLI Overwrites (Format: --slurm.key val or --training.key val)
     remaining_extra_args = []

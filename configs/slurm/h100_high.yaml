@@ -1,5 +1,4 @@
 # Slurm Resource Requests
-job_name: "dllm-train"
 nodes: 1
 gpus_per_node: "h100:4"
 time: "02:00:00"

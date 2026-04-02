@@ -1,5 +1,4 @@
 # Slurm Resource Requests
-job_name: "llada-eval"
 nodes: 1
 gpus_per_node: "l40s:4"
 time: "01:00:00"
