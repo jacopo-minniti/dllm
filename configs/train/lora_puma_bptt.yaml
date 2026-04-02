@@ -9,7 +9,7 @@ training:
   script_path: "examples/llada/sft.py"
   loss_type: "puma_bptt"
   lora: true
-  num_train_epochs: 2
+  num_train_epochs: 3
   learning_rate: 2e-5
   per_device_train_batch_size: 1
   gradient_accumulation_steps: 4
@@ -17,8 +17,8 @@ training:
   lr_scheduler_type: "linear"
   warmup_ratio: 0.1
   logging_steps: 10
-  save_steps: 500
-  eval_steps: 500
+  save_steps: 200
+  eval_steps: 100
   bf16: true
   gradient_checkpointing: true
   seed: 42
