@@ -3,6 +3,7 @@ import yaml
 import subprocess
 import os
 import sys
+from dllm.utils.naming import get_experiment_naming
 
 def resolve_config_path(path: str, base_dir: str) -> str:
     """
@@ -83,7 +84,14 @@ def main():
         i += 1
     extra_args = remaining_extra_args
 
-    # 2. Extract Slurm Directives
+    # 2. Extract Slurm Directives and Setup Metadata
+    # 2a. Determine naming based on config
+    if "training" not in run_cfg: run_cfg["training"] = {}
+    if "seed" not in run_cfg["training"]: run_cfg["training"]["seed"] = 42
+    
+    group, name, tags, output_dir, run_id = get_experiment_naming(run_cfg, slurm_cfg)
+    
+    # 2b. Slurm mapping
     slurm_directives = ["#!/bin/bash"]
     sbatch_map = {
         "job_name": "--job-name",
@@ -116,40 +124,29 @@ def main():
     training = run_cfg.get("training", {})
     script_path = training.pop("script_path", "examples/llada/sft.py")
     
-    # 4a. Automatic Output Directory Construction from WandB
-    wb = run_cfg.get("wandb", {})
-    group = wb.get('group', 'default')
-    name = wb.get('name', 'unnamed')
-
-    if "output_dir" not in training:
-        # Format: .models/{group}/{name}
-        training["output_dir"] = f".models/{group}/{name}"
-        print(f"📂 Automatic output_dir: {training['output_dir']}")
-    
-    # 4b. Auto-resume logic
-    if os.path.exists(training["output_dir"]) and any(d.startswith("checkpoint-") for d in os.listdir(training["output_dir"])):
-        if "resume_from_checkpoint" not in training:
-            training["resume_from_checkpoint"] = "True"
-            print(f"🔄 Checkpoint found in {training['output_dir']}. Auto-resuming...")
-
-    # 4c. Deterministic W&B Run ID
-    import hashlib
-    # Create a unique but persistent ID based on the group and name 
-    # (matches the logic used for the folder structure)
-    persistent_id = hashlib.md5(f"{group}/{name}".encode()).hexdigest()
-
     # 3. Setup WandB and Environment Variables
     env_exports = [
         f"export WANDB_NAME=\"{name}\"",
         f"export WANDB_RUN_GROUP=\"{group}\"",
-        f"export WANDB_RUN_ID=\"{persistent_id}\"",
+        f"export WANDB_RUN_ID=\"{run_id}\"",
         f"export WANDB_RESUME=\"allow\"",
-        f"export WANDB_TAGS=\"{','.join(wb.get('tags', []))}\"",
+        f"export WANDB_TAGS=\"{','.join(tags)}\"",
         f"export WANDB_PROJECT=\"{os.getenv('WANDB_PROJECT', 'BPTT-llada')}\"",
         "export WANDB_INIT_TIMEOUT=300",
         "export WANDB_DEBUG=false",
         "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1"
     ]
+
+    # 4. Prepare Training Command
+    training = run_cfg["training"]
+    script_path = training.pop("script_path", "examples/llada/sft.py")
+    training["output_dir"] = output_dir
+    
+    # 4a. Auto-resume logic
+    if os.path.exists(output_dir) and any(d.startswith("checkpoint-") for d in os.listdir(output_dir)):
+        if "resume_from_checkpoint" not in training:
+            training["resume_from_checkpoint"] = "True"
+            print(f"🔄 Checkpoint found in {output_dir}. Auto-resuming...")
     
     # Combine training params from YAML and CLI extra args
     train_flags = []

@@ -3,6 +3,7 @@ import yaml
 import subprocess
 import os
 import sys
+from dllm.utils.naming import get_eval_naming
 
 def dict_to_arg_str(d, sep=","):
     """Convert dict to 'key=val,key2=val2' format."""
@@ -100,99 +101,31 @@ def main():
         "export NCCL_DEBUG=INFO"
     ]
     
-    # 3b. Automatic Evaluation Checkpoint Construction
-    # Find tasks and pretrained for naming
-    tasks_str = str(evaluation.get("tasks", "eval")).replace(",", "_")
-    model_args = evaluation.get("model_args", {})
-
-    # Pull temperature from top-level evaluation config if present
-    if "temperature" in evaluation:
-        model_args["temperature"] = evaluation.pop("temperature")
-
-    pretrained = model_args.get("pretrained", "model")
+    # 3b. Automatic Naming and Directory Construction
+    if "seed" not in evaluation: evaluation["seed"] = 42
     
-    # Overwrite from CLI if present
+    # Extract model_args and handle CLI overrides
+    model_args = evaluation.get("model_args", {})
     for arg in extra_args:
-        if arg.startswith("--tasks"):
-            tasks_str = arg.split()[-1].replace(",", "_")
         if "--model_args" in arg:
-            # Extract key=value pairs more robustly
-            # Format: --model_args "pretrained=...,threshold=..." or --model_args pretrained=...
             arg_content = arg.split("--model_args")[-1].strip().strip("\"'")
             for kv in arg_content.split(","):
                 if "=" in kv:
                     k, v = kv.split("=", 1)
-                    k, v = k.strip(), v.strip()
-                    model_args[k] = v
-                    if k == "pretrained":
-                        pretrained = v
-        if arg.startswith("--num_fewshot"):
-            try:
-                evaluation["num_fewshot"] = int(arg.split()[-1])
-            except:
-                pass
+                    model_args[k.strip()] = v.strip()
 
-    # Slugify pretrained path for naming
-    model_path = pretrained.strip("./")
-    if model_path.startswith("models/"):
-        model_path = model_path[7:]
-    elif model_path.startswith("models__"):
-        model_path = model_path[8:]
+    evaluation["model_args"] = model_args
+    task_slug, model_slug, checkpoint_name, params_slug, output_path = get_eval_naming(evaluation)
     
-    # Separate checkpoint number if it exists at the end
-    checkpoint_name = "default"
-    path_parts = model_path.split("/")
-    if path_parts[-1].startswith("checkpoint-"):
-        checkpoint_name = path_parts[-1]
-        model_path = "/".join(path_parts[:-1])
+    # Configure results storage
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    evaluation["output_path"] = os.path.dirname(output_path)
+    model_args["eval_checkpoint"] = output_path
     
-    model_slug = model_path.replace("/", "__")
-    
-    # Include relevant hyperparams in slug
-    temp = model_args.get("temperature", 0.0)
-    max_tokens = model_args.get("max_new_tokens")
-    steps = model_args.get("steps")
-    block_size = model_args.get("block_size")
-    threshold = model_args.get("threshold", 0.0)
-    
-    info_parts = []
-    if temp != 0.0:
-        info_parts.append(f"t{temp}")
-    if max_tokens:
-        info_parts.append(f"mt{max_tokens}")
-    if steps:
-        info_parts.append(f"s{steps}")
-    if block_size:
-        info_parts.append(f"bs{block_size}")
-    
-    # New parameters for isolation
-    num_fewshot = evaluation.get("num_fewshot", 0)
-    if num_fewshot > 0:
-        info_parts.append(f"nf{num_fewshot}")
-    
-    try:
-        threshold = float(threshold)
-    except:
-        threshold = 0.0
-        
-    is_puma = "puma" in model_path.lower() or "puma" in checkpoint_name.lower()
-    if threshold > 0.0 and is_puma:
-        info_parts.append(f"th{threshold}")
-    
-    params_str = "_".join(info_parts) if info_parts else "default"
-    
-    # Restructured storage: .evals/<task>/<model>/<checkpoint>/<params>
-    cache_dir = os.path.join(".evals", tasks_str, model_slug, checkpoint_name)
-    os.makedirs(cache_dir, exist_ok=True)
-    auto_checkpoint = os.path.join(cache_dir, f"{params_str}.jsonl")
-    
-    # Force output_path to match our structured cache_dir to avoid scattered results
-    evaluation["output_path"] = cache_dir
-    print(f"📦 Automatic output_path (results/samples): {cache_dir}")
-    
-    if "eval_checkpoint" not in model_args:
-        model_args["eval_checkpoint"] = auto_checkpoint
-        print(f"📦 Automatic eval_checkpoint: {auto_checkpoint}")
+    print(f"📦 Task: {task_slug}")
+    print(f"📦 Model: {model_slug} ({checkpoint_name})")
+    print(f"📦 Params: {params_slug}")
+    print(f"📦 Results: {output_path}")
 
     # ── Determinism ──────────────────────────────────────────
     seed = evaluation.get("seed", 42)
