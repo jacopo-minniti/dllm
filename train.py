@@ -106,26 +106,16 @@ def main():
                 else:
                     slurm_directives.append(f"#SBATCH {flag} {v}")
 
-    # 3. Setup WandB and Environment Variables
-    wb = run_cfg.get("wandb", {})
-    env_exports = [
-        f"export WANDB_NAME=\"{wb.get('name', 'unnamed')}\"",
-        f"export WANDB_RUN_GROUP=\"{wb.get('group', 'default')}\"",
-        f"export WANDB_TAGS=\"{','.join(wb.get('tags', []))}\"",
-        f"export WANDB_PROJECT=\"{os.getenv('WANDB_PROJECT', 'BPTT-llada')}\"",
-        "export WANDB_INIT_TIMEOUT=300",
-        "export WANDB_DEBUG=false",
-        "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1"
-    ]
-
     # 4. Prepare Training Command
     training = run_cfg.get("training", {})
     script_path = training.pop("script_path", "examples/llada/sft.py")
     
     # 4a. Automatic Output Directory Construction from WandB
+    wb = run_cfg.get("wandb", {})
+    group = wb.get('group', 'default')
+    name = wb.get('name', 'unnamed')
+
     if "output_dir" not in training:
-        group = wb.get('group', 'default')
-        name = wb.get('name', 'unnamed')
         # Format: .models/{group}/{name}
         training["output_dir"] = f".models/{group}/{name}"
         print(f"📂 Automatic output_dir: {training['output_dir']}")
@@ -135,6 +125,25 @@ def main():
         if "resume_from_checkpoint" not in training:
             training["resume_from_checkpoint"] = "True"
             print(f"🔄 Checkpoint found in {training['output_dir']}. Auto-resuming...")
+
+    # 4c. Deterministic W&B Run ID
+    import hashlib
+    # Create a unique but persistent ID based on the group and name 
+    # (matches the logic used for the folder structure)
+    persistent_id = hashlib.md5(f"{group}/{name}".encode()).hexdigest()
+
+    # 3. Setup WandB and Environment Variables
+    env_exports = [
+        f"export WANDB_NAME=\"{name}\"",
+        f"export WANDB_RUN_GROUP=\"{group}\"",
+        f"export WANDB_RUN_ID=\"{persistent_id}\"",
+        f"export WANDB_RESUME=\"allow\"",
+        f"export WANDB_TAGS=\"{','.join(wb.get('tags', []))}\"",
+        f"export WANDB_PROJECT=\"{os.getenv('WANDB_PROJECT', 'BPTT-llada')}\"",
+        "export WANDB_INIT_TIMEOUT=300",
+        "export WANDB_DEBUG=false",
+        "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1"
+    ]
     
     # Combine training params from YAML and CLI extra args
     train_flags = []
