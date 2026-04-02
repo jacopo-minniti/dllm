@@ -1,20 +1,13 @@
-# WandB Metadata
-wandb:
-  name: "bottleneck256_expansion512_l41e-4"
-  group: "llada-cab-puma"
-  tags: ["cab", "puma"]
-
-# Training Hyperparameters
 training:
-  script_path: "examples/llada/sft.py"
-  loss_type: "puma"
+  script_path: examples/llada/sft.py
+  loss_type: puma
   lora: false
   num_train_epochs: 3
   learning_rate: 1e-5
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 8
-  dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:10000]"
-  lr_scheduler_type: "linear"
+  dataset_args: allenai/tulu-3-sft-mixture[train:50000,test:10000]
+  lr_scheduler_type: linear
   warmup_ratio: 0.1
   logging_steps: 10
   save_steps: 100
@@ -24,8 +17,6 @@ training:
   seed: 0
   save_only_model: false
   ddp_find_unused_parameters: false
-  
-  # Intervention Settings
   puma_threshold: 0.15
   bptt_steps: 1
   use_cab: true
