@@ -22,7 +22,6 @@ def get_experiment_naming(run_cfg, slurm_cfg):
     
     # 1. Base Model Identification
     model_path = str(training.get("model_name_or_path", "llada"))
-    # Extract "llada" or "gsai-ml/llada-8b-instruct" slug
     if "llada" in model_path.lower():
         base_model = "llada"
     else:
@@ -113,9 +112,8 @@ def get_experiment_naming(run_cfg, slurm_cfg):
 def get_eval_naming(evaluation_cfg):
     """
     Unified naming system for evaluation tasks.
-    Returns: (task_slug, model_slug, checkpoint_name, params_slug, output_path)
     """
-    # 1. Task Slug
+    # 1. Task Slug (e.g. math500_reasoning)
     tasks = evaluation_cfg.get("tasks", "eval")
     if isinstance(tasks, list):
         task_slug = "_".join(sorted(tasks))
@@ -125,19 +123,25 @@ def get_eval_naming(evaluation_cfg):
         
     # 2. Model and Checkpoint Slug
     model_args = evaluation_cfg.get("model_args", {})
-    pretrained = str(model_args.get("pretrained", "model"))
+    pretrained = str(model_args.get("pretrained", "model")).strip("./")
     
-    # Normalize path and skip repo root prefixes
-    path_nodes = [p for p in pretrained.strip("./").split("/") if p not in [".models", "models"]]
+    # Normalize model path to group__name
+    # Strip prefixes like .models, models, etc.
+    nodes = [n for n in pretrained.split("/") if n not in [".models", "models"]]
     
     checkpoint_name = "final"
-    if path_nodes and path_nodes[-1].startswith("checkpoint-"):
-        checkpoint_name = path_nodes.pop()
+    if nodes and nodes[-1].startswith("checkpoint-"):
+        checkpoint_name = nodes.pop()
     
-    # Form model_slug from remaining nodes
-    model_slug = "__".join(path_nodes) if path_nodes else "default"
+    # The "model_slug" is strictly group__name
+    if len(nodes) >= 2:
+        model_slug = f"{nodes[-2]}__{nodes[-1]}"
+    elif nodes:
+        model_slug = nodes[0].replace("/", "__")
+    else:
+        model_slug = "default"
 
-    # 3. Eval Params Slug (Only relevant ones)
+    # 3. Eval Params Slug
     eval_parts = []
     
     temp = _to_float(model_args.get("temperature", 0.0))
@@ -147,8 +151,8 @@ def get_eval_naming(evaluation_cfg):
     if steps > 0: eval_parts.append(f"s{steps}")
     
     th = _to_float(model_args.get("threshold", 0.0))
-    # Threshold is relevant mainly for PUMA models
-    if th > 0 and "puma" in model_slug.lower():
+    # Threshold is relevant for PUMA/diffusion models
+    if th > 0 and ("puma" in model_slug.lower() or "llada" in model_slug.lower()):
         eval_parts.append(f"th{th}")
         
     num_fewshot = _to_int(evaluation_cfg.get("num_fewshot", 0))
@@ -157,7 +161,7 @@ def get_eval_naming(evaluation_cfg):
     params_slug = "_".join(eval_parts) if eval_parts else "default"
     
     # 4. Final Output Path
-    # Structure: .evals/<task>/<model_slug>/<checkpoint>/<params_slug>.jsonl
+    # Structure: .evals/<task>/<group__name>/<checkpoint>/<params_slug>.jsonl
     base_eval_dir = os.path.join(".evals", task_slug, model_slug, checkpoint_name)
     output_path = os.path.join(base_eval_dir, f"{params_slug}.jsonl")
     
