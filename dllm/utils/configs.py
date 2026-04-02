@@ -25,6 +25,9 @@ class ModelArguments:
     eval_checkpoint: str = None
     merge_lora: bool = False
     use_loopholing: bool = False
+    use_cab: bool = False
+    cab_bottleneck_dim: int = 128
+    cab_mlp_expansion_dim: int = 512
 
     def __post_init__(self):
         self.model_name_or_path = resolve_with_base_env(

@@ -306,6 +306,21 @@ class ModelConfig():
     Whether to use loopholing (latent state injection across steps).
     """
 
+    use_cab: bool = False
+    """
+    Whether to use Cross-Attention Bridge (CAB) to bridge past state.
+    """
+
+    cab_bottleneck_dim: int = 128
+    """
+    Bottleneck dimension for CAB.
+    """
+
+    cab_mlp_expansion_dim: int = 512
+    """
+    Expansion dimension for CAB's SwiGLU MLP.
+    """
+
     vocab_size: int = 50257
     """
     Vocabulary size of the model.

@@ -65,6 +65,7 @@ __all__ = [
     "LLaDAModel",
     "LLaDAOutput",
     "LLaDAGenerateOutput",
+    "CrossAttentionBridge",
 ]
 
 
@@ -516,6 +517,73 @@ def alibi_attention_bias(seq_len: int, config: ModelConfig, device: torch.device
 
     # shape: (1, n_heads, seq_len, seq_len)
     return alibi_bias * (1.0 / (2 ** m.view(1, config.n_heads, 1, 1)))  # type: ignore
+
+
+class CrossAttentionBridge(nn.Module):
+    """
+    A bottleneck Cross-Attention Bridge that retrieves context from past latent states.
+    """
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.config = config
+        d_model = config.d_model
+        d_b = config.cab_bottleneck_dim
+        d_ff = config.cab_mlp_expansion_dim
+
+        # Phase B.1: Projections to bottleneck
+        self.w_q = nn.Linear(d_model, d_b, bias=config.include_bias, device=config.init_device)
+        self.w_k = nn.Linear(d_model, d_b, bias=config.include_bias, device=config.init_device)
+        self.w_v = nn.Linear(d_model, d_b, bias=config.include_bias, device=config.init_device)
+
+        # Phase B.3: SwiGLU MLP Processing
+        self.norm = RMSLayerNorm(config, size=d_b)
+        self.w1 = nn.Linear(d_b, d_ff, bias=config.include_bias, device=config.init_device)
+        self.w2 = nn.Linear(d_ff, d_b, bias=config.include_bias, device=config.init_device)
+        self.w3 = nn.Linear(d_b, d_ff, bias=config.include_bias, device=config.init_device)
+
+        # Phase B.4: Zero-Bridge Injection
+        self.w_o = nn.Linear(d_b, d_model, bias=config.include_bias, device=config.init_device)
+
+    def reset_parameters(self):
+        # Initialize W_O to zero so the bridge starts as an identity/null operation
+        nn.init.zeros_(self.w_o.weight)
+        if self.w_o.bias is not None:
+            nn.init.zeros_(self.w_o.bias)
+
+        # Standard initialization for bottleneck layers
+        init_weights(self.config, self.w_q, d=self.config.d_model)
+        init_weights(self.config, self.w_k, d=self.config.d_model)
+        init_weights(self.config, self.w_v, d=self.config.d_model)
+        init_weights(self.config, self.w1, d=self.config.cab_bottleneck_dim)
+        init_weights(self.config, self.w2, d=self.config.cab_mlp_expansion_dim)
+        init_weights(self.config, self.w3, d=self.config.cab_bottleneck_dim)
+
+    def forward(self, x: torch.Tensor, h_t: torch.Tensor) -> torch.Tensor:
+        # Phase B.1: Projection to bottleneck
+        # Query from current step embedding, Key/Value from past state
+        q = self.w_q(x)
+        k = self.w_k(h_t)
+        v = self.w_v(h_t)
+
+        # Phase B.2: Bottleneck Attention
+        # Use SDPA for efficient cross-attention (polls past state)
+        # shape: (B, L, d_b)
+        a = F.scaled_dot_product_attention(
+            q.unsqueeze(1),
+            k.unsqueeze(1),
+            v.unsqueeze(1),
+            is_causal=False
+        ).squeeze(1)
+
+        # Phase B.3: SwiGLU MLP Processing
+        a_norm = self.norm(a)
+        # SwiGLU: SiLU(x W1) * (x W3)
+        h = F.silu(self.w1(a_norm)) * self.w3(a_norm)
+        # Residual: Z = A + Z_mlp
+        z = a + self.w2(h)
+
+        # Phase B.4: Return delta for injection
+        return self.w_o(z)
 
 
 class LLaDABlock(nn.Module):
@@ -1160,8 +1228,9 @@ class LLaDAModel(LLaDAPreTrainedModel):
                 }
             )
 
-        if self.config.use_loopholing:
-            self.transformer.update({"h_t_ln": LayerNorm.build(config)})
+        self.h_t_ln = LayerNorm.build(config) if config.use_loopholing else None
+        self.cab = CrossAttentionBridge(config) if config.use_cab else None
+
         # When `init_device="meta"` FSDP will call `reset_parameters()` to initialize weights.
         if init_params and self.config.init_device != "meta":
             self.post_init()
@@ -1209,6 +1278,12 @@ class LLaDAModel(LLaDAPreTrainedModel):
 
         # Top-level layer norm.
         self.transformer.ln_f.reset_parameters()  # type: ignore
+
+        if self.h_t_ln is not None:
+            self.h_t_ln.reset_parameters()
+        
+        if self.cab is not None:
+            self.cab.reset_parameters()
 
         # Output weights.
         if hasattr(self.transformer, "ff_out"):
@@ -1269,15 +1344,19 @@ class LLaDAModel(LLaDAPreTrainedModel):
         else:
             raise ValueError("Either `input_ids` or `input_embeddings` must be provided")
 
-        if self.config.use_loopholing and h_t is not None:
-            # Loopholing injection
-            x = x + self.transformer.h_t_ln(h_t)
-        elif self.config.use_loopholing and h_t is None:
-            # Initialize h_t if not provided but loopholing is enabled
-            # Note: During first step of BPTT, h_t is zeros.
-            # We don't want to redefine x here, just add the zeroed latent
+        if self.config.use_cab and h_t is not None:
+            # Phase B: The Cross-Attention Bridge Injection
+            x = x + self.cab(x, h_t)
+        elif self.config.use_loopholing and h_t is not None:
+            # Traditional Loopholing injection
+            x = x + self.h_t_ln(h_t)
+        elif (self.config.use_loopholing or self.config.use_cab) and h_t is None:
+            # Initialize h_t if not provided but loopholing or CAB is enabled
             h_t0 = torch.zeros_like(x)
-            x = x + self.transformer.h_t_ln(h_t0)
+            if self.config.use_cab:
+                x = x + self.cab(x, h_t0)
+            else:
+                x = x + self.h_t_ln(h_t0)
 
         if past_key_values:
             assert len(past_key_values) == self.config.n_layers
@@ -1429,7 +1508,7 @@ class LLaDAModel(LLaDAPreTrainedModel):
         if self.config.scale_logits:
             logits.mul_(1 / math.sqrt(self.config.d_model))
 
-        h_s = x if self.config.use_loopholing else None
+        h_s = x if (self.config.use_loopholing or self.config.use_cab) else None
 
         return LLaDAOutput(
             logits=logits, 

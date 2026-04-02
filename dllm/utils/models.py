@@ -74,6 +74,9 @@ def get_model(
         "low_cpu_mem_usage": True,
         "trust_remote_code": True,
         "use_loopholing": getattr(model_args, "use_loopholing", False),
+        "use_cab": getattr(model_args, "use_cab", False),
+        "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
+        "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
     }
 
     # Ensure local paths are recognized as such by transformers (starting with ./ or absolute)
@@ -171,6 +174,20 @@ def get_model(
             print_main("✅ LoRA weights merged successfully.")
         except Exception as e:
             print_main(f"⚠️ Failed to merge LoRA weights: {e}")
+
+    # --- Freeze backbone and only train CAB if requested ---
+    if getattr(model_args, "use_cab", False) and not getattr(model_args, "lora", False):
+        print_main("❄️ CAB training detected. Freezing base model parameters...")
+        for name, param in model.named_parameters():
+            if "cab" not in name:
+                param.requires_grad = False
+            else:
+                param.requires_grad = True
+                print_main(f"🔥 Training parameter: {name}")
+
+        # ensure input require grads for checkpointing support
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
 
     return model
 
