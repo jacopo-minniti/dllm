@@ -160,7 +160,7 @@ def main():
 
     # 4b. Automation: Ensure custom modeling code is present in the output directory
     # This ensures and enables `trust_remote_code=True` loading for checkpoints.
-    if "llada" in model_args.get("model_name_or_path", "").lower():
+    if "llada" in training.get("model_name_or_path", "").lower():
         model_src = "dllm/pipelines/llada/models/"
         if os.path.exists(model_src):
             print(f"ℹ️ Copying LLaDA modeling files to {output_dir}...")
