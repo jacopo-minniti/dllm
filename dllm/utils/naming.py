@@ -145,19 +145,32 @@ def get_eval_naming(evaluation_cfg):
     # 3. Eval Params Slug
     eval_parts = []
     
-    temp = _to_float(model_args.get("temperature", 0.0))
-    if temp > 0: eval_parts.append(f"t{temp}")
+    # Standard generation params
+    mnt = _to_int(model_args.get("max_new_tokens", 0))
+    if mnt > 0: eval_parts.append(f"mnt{mnt}")
     
     steps = _to_int(model_args.get("steps", 0))
     if steps > 0: eval_parts.append(f"s{steps}")
     
+    bs = _to_int(model_args.get("block_size", 0))
+    if bs > 0: eval_parts.append(f"bs{bs}")
+    
+    temp = _to_float(model_args.get("temperature", 0.0))
+    eval_parts.append(f"t{temp}")
+    
+    # Diffusion/PUMA specific
     th = _to_float(model_args.get("threshold", 0.0))
-    # Threshold is relevant for PUMA/diffusion models
-    if th > 0 and ("puma" in model_slug.lower() or "llada" in model_slug.lower()):
-        eval_parts.append(f"th{th}")
+    if th > 0: eval_parts.append(f"th{th}")
+    
+    if model_args.get("use_loopholing", False):
+        eval_parts.append("loop")
         
-    num_fewshot = _to_int(evaluation_cfg.get("num_fewshot", 0))
-    if num_fewshot > 0: eval_parts.append(f"nf{num_fewshot}")
+    cfg = _to_float(model_args.get("cfg_scale", 0.0))
+    if cfg > 0: eval_parts.append(f"cfg{cfg}")
+    
+    # Task specific
+    nf = _to_int(evaluation_cfg.get("num_fewshot", 0))
+    eval_parts.append(f"nf{nf}")
     
     params_slug = "_".join(eval_parts) if eval_parts else "default"
     
