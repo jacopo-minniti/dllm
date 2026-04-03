@@ -3,6 +3,7 @@ import yaml
 import subprocess
 import os
 import sys
+import shutil
 from dllm.utils.naming import get_experiment_naming
 
 def resolve_config_path(path: str, base_dir: str) -> str:

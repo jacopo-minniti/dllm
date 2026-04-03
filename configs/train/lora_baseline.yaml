@@ -1,7 +1,5 @@
 training:
-  # ──────────────────────────────────────────────────────────
-  # ── Core Model Config ─────────────────────────────────────
-  # ──────────────────────────────────────────────────────────
+  # Core Model Config
   script_path: "examples/llada/sft.py"
   model_name_or_path: "GSAI-ML/LLaDA-8B-Base"
   bf16: True
@@ -9,9 +7,7 @@ training:
   seed: 42
   ddp_find_unused_parameters: False
 
-  # ──────────────────────────────────────────────────────────
-  # ── Method: LoRA Baseline (MLM) ───────────────────────────
-  # ──────────────────────────────────────────────────────────
+  # Method: LoRA Baseline (MLM)
   loss_type: "mlm"                 # Standard LLaDA MLM loss
   lora: True
   r: 32                            # Rank
@@ -19,33 +15,25 @@ training:
   lora_dropout: 0.05               # Dropout
   target_modules: "all-linear"     # Targeted blocks
 
-  # ──────────────────────────────────────────────────────────
-  # ── PUMA / CAB Interventions (Disabled) ───────────────────
-  # ──────────────────────────────────────────────────────────
-  puma_threshold: 0.15             # Target budget (for reference)
+  # PUMA / CAB Interventions
+  puma_threshold: 0.0
   use_cab: False
   
-  # ──────────────────────────────────────────────────────────
-  # ── Hyperparameters ───────────────────────────────────────
-  # ──────────────────────────────────────────────────────────
+  # Hyperparameters
   num_train_epochs: 3
   learning_rate: 2e-05
   per_device_train_batch_size: 4
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 4
   lr_scheduler_type: "linear"
   warmup_ratio: 0.1
 
-  # ──────────────────────────────────────────────────────────
-  # ── Dataset & Formatting ──────────────────────────────────
-  # ──────────────────────────────────────────────────────────
+  # Dataset & Formatting
   dataset_args: "openai/gsm8k[train:7473,test:1319]"
-  use_chat_template: False         # Disabled for GSM8K as requested
+  use_chat_template: False
   mask_prompt_loss: True
 
-  # ──────────────────────────────────────────────────────────
-  # ── Logging & Checkpointing ───────────────────────────────
-  # ──────────────────────────────────────────────────────────
+  # Logging & Checkpointing
   logging_steps: 10
-  save_steps: 200
-  eval_steps: 100
+  save_steps: 100
+  eval_steps: 50
   save_only_model: False

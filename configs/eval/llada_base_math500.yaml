@@ -1,19 +1,15 @@
 evaluation:
-  # ──────────────────────────────────────────────────────────
-  # ── Evaluation Harness ────────────────────────────────────
-  # ──────────────────────────────────────────────────────────
+  # Evaluation Harness
   script_path: "dllm/pipelines/llada/eval.py"
   tasks: "math500_reasoning"
-  num_fewshot: 4                   # Base model usually requires few-shot
-  batch_size: 1
+  num_fewshot: 4
+  batch_size: 4
   seed: 42
   device: "cuda"
-  apply_chat_template: False       # No chat template for Base model
+  apply_chat_template: False   
   log_samples: True
 
-  # ──────────────────────────────────────────────────────────
-  # ── Model Configuration ───────────────────────────────────
-  # ──────────────────────────────────────────────────────────
+  # Model Configuration
   model: "llada"
   model_args:
     pretrained: "GSAI-ML/LLaDA-8B-Base"
@@ -25,12 +21,10 @@ evaluation:
     lora: False
     merge_lora: False
     
-    # ──────────────────────────────────────────────────────────
-    # ── Sampling Strategy ─────────────────────────────────────
-    # ──────────────────────────────────────────────────────────
+    # Sampling Strategy 
     max_new_tokens: 512
-    steps: 512                     # Baseline quality
+    steps: 256          
     block_size: 32
-    temperature: 0.0               # Greedy decoding for reasoning benchmarks
+    temperature: 0.0    
     remasking: "low_confidence"
-    threshold: 0.0                 # Fixed steps budget (No PUMA)
+    threshold: 0.0      
