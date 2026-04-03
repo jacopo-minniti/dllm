@@ -1,21 +1,38 @@
 evaluation:
-  seed: 0
-  script_path: dllm/pipelines/llada/eval.py
-  model: llada
-  tasks: math500_reasoning
-  batch_size: 1
-  device: cuda
-  apply_chat_template: true
+  # ──────────────────────────────────────────────────────────
+  # ── Evaluation Harness ────────────────────────────────────
+  # ──────────────────────────────────────────────────────────
+  script_path: "dllm/pipelines/llada/eval.py"
+  tasks: "math500_reasoning"
   num_fewshot: 0
-  log_samples: true
+  batch_size: 1
+  seed: 0
+  device: "cuda"
+  apply_chat_template: True
+  log_samples: True
+
+  # ──────────────────────────────────────────────────────────
+  # ── Model Configuration ───────────────────────────────────
+  # ──────────────────────────────────────────────────────────
+  model: "llada"
   model_args:
-    pretrained: .models/llada-tulu3-lora/lr2e-05_bs128_lora-r32-a64/checkpoint-1000
-    dtype: bfloat16
+    pretrained: ".models/llada-tulu3-lora/lr2e-05_bs128_lora-r32-a64/checkpoint-1000"
+    dtype: "bfloat16"
+    
+    lora: True
+    merge_lora: True
+    
+    # Interventions (Disabled/Baseline)
+    # Set threshold > 0 and use_loopholing: True to enable PUMA inference
+    use_cab: False
+    use_loopholing: False
+    threshold: 0.0
+
+    # ──────────────────────────────────────────────────────────
+    # ── Sampling Strategy ─────────────────────────────────────
+    # ──────────────────────────────────────────────────────────
     max_new_tokens: 512
     steps: 512
     block_size: 32
     temperature: 0.7
-    # threshold: 0.15
-    # use_loopholing: true
-    lora: true
-    merge_lora: true
+    remasking: "low_confidence"

@@ -1,17 +1,36 @@
 evaluation:
-  script_path: dllm/pipelines/llada/eval.py
-  model: llada
-  tasks: math500_reasoning
+  # ──────────────────────────────────────────────────────────
+  # ── Evaluation Harness ────────────────────────────────────
+  # ──────────────────────────────────────────────────────────
+  script_path: "dllm/pipelines/llada/eval.py"
+  tasks: "math500_reasoning"
+  num_fewshot: 4                   # Base model usually requires few-shot
   batch_size: 1
-  device: cuda
-  apply_chat_template: false
-  num_fewshot: 4
-  log_samples: true
+  seed: 42
+  device: "cuda"
+  apply_chat_template: False       # No chat template for Base model
+  log_samples: True
+
+  # ──────────────────────────────────────────────────────────
+  # ── Model Configuration ───────────────────────────────────
+  # ──────────────────────────────────────────────────────────
+  model: "llada"
   model_args:
-    pretrained: GSAI-ML/LLaDA-8B-Base
-    dtype: bfloat16
+    pretrained: "GSAI-ML/LLaDA-8B-Base"
+    dtype: "bfloat16"
+    
+    # Interventions (Disabled)
+    use_cab: False
+    use_loopholing: False
+    lora: False
+    merge_lora: False
+    
+    # ──────────────────────────────────────────────────────────
+    # ── Sampling Strategy ─────────────────────────────────────
+    # ──────────────────────────────────────────────────────────
     max_new_tokens: 512
-    steps: 512
+    steps: 512                     # Baseline quality
     block_size: 32
     temperature: 0.7
-    remasking: low_confidence
+    remasking: "low_confidence"
+    threshold: 0.0                 # Fixed steps budget (No PUMA)
