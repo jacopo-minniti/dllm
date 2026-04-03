@@ -8,7 +8,7 @@ training:
   ddp_find_unused_parameters: False
 
   # Method: LoRA Baseline (MLM)
-  loss_type: "puma"                 # Standard LLaDA MLM loss
+  loss_type: "puma"               
   lora: True
   r: 32                            # Rank
   lora_alpha: 64                   # Alpha
@@ -18,6 +18,7 @@ training:
   # PUMA / CAB Interventions
   puma_threshold: 0.15
   use_cab: False
+  use_loopholing: False
   
   # Hyperparameters
   num_train_epochs: 3
