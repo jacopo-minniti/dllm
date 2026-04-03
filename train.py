@@ -38,6 +38,8 @@ def main():
     parser.add_argument("--job_name", 
                         default="dllm", 
                         help="Slurm job name")
+    parser.add_argument("--begin",
+                        help="Time to start the Slurm job (e.g. 'now+60' or '22:00')")
     
     # Collect remaining args to pass directly to training script
     args, extra_args = parser.parse_known_args()
@@ -55,7 +57,12 @@ def main():
     # 1a. Set default job name or override from CLI
     slurm_cfg["job_name"] = args.job_name
 
-    # 1b. Handle CLI Overwrites (Format: --slurm.key val or --training.key val)
+    # 1b. Handle scheduling delay
+    if args.begin:
+        slurm_cfg["begin"] = args.begin
+        print(f"🕒 Scheduling job to start at: {args.begin}")
+
+    # 1c. Handle CLI Overwrites (Format: --slurm.key val or --training.key val)
     remaining_extra_args = []
     i = 0
     while i < len(extra_args):
@@ -100,6 +107,7 @@ def main():
     # 2b. Slurm mapping
     slurm_directives = ["#!/bin/bash"]
     sbatch_map = {
+        "begin": "--begin",
         "job_name": "--job-name",
         "nodes": "--nodes",
         "gpus_per_node": "--gpus-per-node",
