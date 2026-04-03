@@ -5,17 +5,17 @@ evaluation:
   tasks: math500_reasoning
   batch_size: 1
   device: cuda
-  apply_chat_template: false
-  num_fewshot: 4
+  apply_chat_template: true
+  num_fewshot: 0
   log_samples: true
   model_args:
-    pretrained: .models/llada-lora-puma-bptt/lr2e-5_s42/checkpoint-1000
+    pretrained: .models/llada-tulu3-lora/lr2e-05_bs128_lora-r32-a64/checkpoint-1000
     dtype: bfloat16
     max_new_tokens: 512
     steps: 512
     block_size: 32
     temperature: 0.7
-    threshold: 0.15
-    use_loopholing: true
+    # threshold: 0.15
+    # use_loopholing: true
     lora: true
     merge_lora: true

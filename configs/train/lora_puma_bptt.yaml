@@ -1,4 +1,5 @@
 training:
+  model_name_or_path: "GSAI-ML/LLaDA-8B-Base"
   script_path: examples/llada/sft.py
   loss_type: puma_bptt
   lora: true
