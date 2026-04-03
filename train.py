@@ -90,6 +90,12 @@ def main():
     if "seed" not in run_cfg["training"]: run_cfg["training"]["seed"] = 42
     
     group, name, tags, output_dir, run_id = get_experiment_naming(run_cfg, slurm_cfg)
+
+    # 2a. Override run_id if provided via CLI/config (for manual WandB resumption)
+    if "run_id" in run_cfg.get("training", {}):
+        manual_id = str(run_cfg["training"]["run_id"])
+        print(f"🔧 Overriding WandB Run ID: {run_id} -> {manual_id}")
+        run_id = manual_id
     
     # 2b. Slurm mapping
     slurm_directives = ["#!/bin/bash"]
