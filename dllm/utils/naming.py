@@ -66,7 +66,7 @@ def get_experiment_naming(run_cfg, slurm_cfg):
     name_parts = []
     
     # Essential Training Params
-    lr = training.get("learning_rate", 1e-5)
+    lr = _to_float(training.get("learning_rate", 1e-5))
     name_parts.append(f"lr{lr:g}")
     
     # Calculate Effective Batch Size
