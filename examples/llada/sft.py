@@ -53,6 +53,10 @@ class DataArguments(dllm.utils.DataArguments):
         default=True,
         metadata={"help": "Whether to mask the loss on the prompt tokens"},
     )
+    use_chat_template: bool = field(
+        default=True,
+        metadata={"help": "Whether to use the chat template or raw text"},
+    )
 
 
 @dataclass
@@ -110,6 +114,7 @@ def train():
                 dllm.utils.default_sft_map_fn,
                 tokenizer=tokenizer,
                 mask_prompt_loss=data_args.mask_prompt_loss,
+                use_chat_template=data_args.use_chat_template,
             )
             # Only use multiple processes for mapping on the main process to avoid thundering herd on cache locks
             # For non-main processes, they should just load the cached version.

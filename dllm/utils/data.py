@@ -222,35 +222,61 @@ def post_process_dataset_streaming(
         raise NotImplementedError
 
 
-def default_sft_map_fn(row, *, tokenizer, mask_prompt_loss: bool = True) -> dict:
+def default_sft_map_fn(row, *, tokenizer, mask_prompt_loss: bool = True, use_chat_template: bool = True) -> dict:
     """
     Build input_ids and labels for SFT.
 
     Args:
-        row: a dataset row with `messages`
+        row: a dataset row (messages OR prompt/response)
         tokenizer: a HF tokenizer
-        mask_prompt_loss: whether to mask prompt tokens (set their labels to -100)
-
-    Returns:
-        dict with keys: input_ids, labels, and optionally prompt_len
+        mask_prompt_loss: whether to mask prompt tokens
+        use_chat_template: whether to use the chat template or raw text
     """
-    prompt_response_tokens = tokenizer.apply_chat_template(
-        row["messages"], tokenize=True, add_generation_prompt=False
-    )
-    labels = prompt_response_tokens.copy()
-
-    if mask_prompt_loss:
-        prompt_tokens = tokenizer.apply_chat_template(
-            row["messages"][:-1], tokenize=True, add_generation_prompt=True
+    if use_chat_template and "messages" in row:
+        tokenized = tokenizer.apply_chat_template(
+            row["messages"], tokenize=True, add_generation_prompt=False
         )
-        labels[: len(prompt_tokens)] = [-100] * len(prompt_tokens)
+        labels = tokenized.copy()
+
+        if mask_prompt_loss:
+            prompt_tokens = tokenizer.apply_chat_template(
+                row["messages"][:-1], tokenize=True, add_generation_prompt=True
+            )
+            labels[: len(prompt_tokens)] = [-100] * len(prompt_tokens)
+            return {
+                "input_ids": tokenized,
+                "labels": labels,
+                "prompt_len": len(prompt_tokens),
+            }
+        return {"input_ids": tokenized, "labels": labels}
+
+    # Raw Text Path (used for gsm8k or if chat template is disabled)
+    prompt_text = row.get("prompt", "")
+    response_text = row.get("response", "")
+    
+    # We append a newline or space separation
+    connector = "\n" if prompt_text and response_text else ""
+    full_text = prompt_text + connector + response_text
+    
+    # Prepend BOS if not already there, and append EOS
+    tokenized = tokenizer(full_text, add_special_tokens=True)
+    input_ids = tokenized["input_ids"]
+    labels = input_ids.copy()
+    
+    if mask_prompt_loss:
+        # We tokenize the prompt part to find its length
+        # NOTE: some tokenizers might tokenize "A\nB" differently than "A" + "\n" + "B"
+        # but for SFT this is usually acceptable.
+        prompt_tokenized = tokenizer(prompt_text + connector, add_special_tokens=True)
+        prompt_len = len(prompt_tokenized["input_ids"])
+        labels[:prompt_len] = [-100] * prompt_len
         return {
-            "input_ids": prompt_response_tokens,
+            "input_ids": input_ids,
             "labels": labels,
-            "prompt_len": len(prompt_tokens),
+            "prompt_len": prompt_len,
         }
 
-    return {"input_ids": prompt_response_tokens, "labels": labels}
+    return {"input_ids": input_ids, "labels": labels}
 
 
 def prepend_bos(

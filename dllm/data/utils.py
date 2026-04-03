@@ -85,6 +85,9 @@ def load_sft_dataset(
         elif _match(dataset_name_or_path, "HuggingFaceH4/ultrachat_200k"):
             ds = load_dataset(dataset_name_or_path)
             ds = DatasetDict({"train": ds["train_sft"], "test": ds["test_sft"]})
+        elif _match(dataset_name_or_path, "openai/gsm8k"):
+            from dllm.data.gsm8k import load_dataset_gsm8k
+            ds = load_dataset_gsm8k(dataset_name_or_path)
         else:
             ds = load_dataset(dataset_name_or_path)
 
