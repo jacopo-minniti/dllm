@@ -1,27 +1,17 @@
-# Evaluation Configuration
 evaluation:
-  script_path: "dllm/pipelines/llada/eval.py"
-  model: "llada"
-  tasks: "math500_reasoning"
+  script_path: dllm/pipelines/llada/eval.py
+  model: llada
+  tasks: math500_reasoning
   batch_size: 1
-  device: "cuda"
-  output_path: "./.evals/llada_math500"
+  device: cuda
   apply_chat_template: false
   num_fewshot: 4
   log_samples: true
-  
   model_args:
-    pretrained: "GSAI-ML/LLaDA-8B-Base"
-    dtype: "bfloat16"
+    pretrained: GSAI-ML/LLaDA-8B-Base
+    dtype: bfloat16
     max_new_tokens: 512
     steps: 512
     block_size: 32
     temperature: 0.7
-    remasking: "low_confidence"
-
-  # WandB tracking details (passed as comma-separated key=val)
-  # Project/Entity are picked up from environment variables (.env)
-  wandb_args:
-    name: "0"
-    group: "llada-lora-math500"
-    tags: "baseline evaluation"
+    remasking: low_confidence

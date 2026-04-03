@@ -1,20 +1,13 @@
-# WandB Metadata
-wandb:
-  name: "lr2e-5_s42"
-  group: "llada-lora-puma"
-  tags: ["ablation"]
-
-# Training Hyperparameters (Aligned with baseline)
 training:
-  script_path: "examples/llada/sft.py"
-  loss_type: "puma"
+  script_path: examples/llada/sft.py
+  loss_type: puma
   lora: true
   num_train_epochs: 2
   learning_rate: 2e-5
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 4
-  dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:10000]"
-  lr_scheduler_type: "linear"
+  dataset_args: allenai/tulu-3-sft-mixture[train:50000,test:10000]
+  lr_scheduler_type: linear
   warmup_ratio: 0.1
   logging_steps: 10
   save_steps: 100
@@ -24,8 +17,6 @@ training:
   seed: 42
   save_only_model: false
   ddp_find_unused_parameters: false
-  
-  # PUMA-specific settings
   puma_threshold: 0.15
-  confidence_type: "top_prob"
+  confidence_type: top_prob
   weighted_ce: false

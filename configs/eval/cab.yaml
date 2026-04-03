@@ -1,0 +1,27 @@
+evaluation:
+  seed: 42
+  script_path: dllm/pipelines/llada/eval.py
+  model: llada
+  tasks: math500_reasoning
+  batch_size: 1
+  device: cuda
+  apply_chat_template: true
+  num_fewshot: 0
+  log_samples: true
+  model_args:
+    pretrained: .models/llada-tulu3-cab-puma/lr1e-5_bs128_puma-th0.15_cab-b512-e1024/checkpoint-100
+    dtype: bfloat16
+    max_new_tokens: 512
+    steps: 512
+    block_size: 32
+    temperature: 0.7
+    # PUMA Settings
+    threshold: 0.15           
+    # CRITICAL: use_loopholing must be true to carry h_t (the "signal") across steps
+    use_loopholing: true      
+    # CRITICAL: explicitly enable the CAB intervention
+    use_cab: true             
+    lora: false
+    cab_bottleneck_dim: 512
+    cab_mlp_expansion_dim: 1024
+

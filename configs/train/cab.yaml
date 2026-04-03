@@ -14,7 +14,6 @@ training:
   eval_steps: 50
   bf16: true
   gradient_checkpointing: true
-  seed: 0
   save_only_model: false
   ddp_find_unused_parameters: false
   puma_threshold: 0.15

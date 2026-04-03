@@ -1,34 +1,21 @@
-# Evaluation Configuration
 evaluation:
   seed: 0
-  script_path: "dllm/pipelines/llada/eval.py"
-  model: "llada"
-  tasks: "math500_reasoning"
+  script_path: dllm/pipelines/llada/eval.py
+  model: llada
+  tasks: math500_reasoning
   batch_size: 1
-  device: "cuda"
-  output_path: "./.evals/llada_math500"
+  device: cuda
   apply_chat_template: false
   num_fewshot: 4
   log_samples: true
-  
   model_args:
-    # GSAI-ML/LLaDA-8B-Instruct
-    # .models/llada-base-lora-tulu3/lr2e-5_s42/checkpoint-1000
-    # .models/llada-base-lora-puma/lr2e-5_s42/checkpoint-400
-    # .models/llada-lora-puma-bptt/lr2e-5_s42/checkpoint-500
-    pretrained: ".models/llada-lora-puma-bptt/lr2e-5_s42/checkpoint-1000"
-    dtype: "bfloat16"
+    pretrained: .models/llada-lora-puma-bptt/lr2e-5_s42/checkpoint-1000
+    dtype: bfloat16
     max_new_tokens: 512
     steps: 512
     block_size: 32
     temperature: 0.7
     threshold: 0.15
-    # --- BPTT / Loopholing optimization ---
-    use_loopholing: true  # Essential for BPTT models
-    lora: true           # Ensure lora loading is active
-    merge_lora: true      # Significant speedup for inference
-
-  wandb_args:
-    name: "puma-bptt-math500"
-    group: "llada-lora-math500"
-    tags: "baseline evaluation"
+    use_loopholing: true
+    lora: true
+    merge_lora: true
