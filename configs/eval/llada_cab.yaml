@@ -21,6 +21,9 @@ evaluation:
     # Interventions (Disabled/Baseline)
     # Set threshold > 0 and use_loopholing: True to enable PUMA inference
     use_cab: True
+    cab_bottleneck_dim: 512   
+    cab_mlp_expansion_dim: 1024 
+
     use_loopholing: True
     threshold: 0.15
 
