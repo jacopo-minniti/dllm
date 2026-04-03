@@ -21,11 +21,17 @@ def get_experiment_naming(run_cfg, slurm_cfg):
     training = run_cfg.get("training", {})
     
     # 1. Base Model Identification
-    model_path = str(training.get("model_name_or_path", "llada"))
-    if "llada" in model_path.lower():
-        base_model = "llada"
+    model_path = str(training.get("model_name_or_path", "llada")).lower()
+    if "llada" in model_path:
+        if "instruct" in model_path:
+            base_model = "llada-instruct"
+        elif "base" in model_path:
+            base_model = "llada-base"
+        else:
+            base_model = "llada"
     else:
-        base_model = os.path.basename(model_path.rstrip("/")).lower().replace("-", "")
+        # Final fallback for local paths or other model types
+        base_model = os.path.basename(model_path.rstrip("/")).replace("-", "").replace("_", "")
 
     # 1.5 Dataset Identification
     dataset_raw = str(training.get("dataset_args", "unknown"))
