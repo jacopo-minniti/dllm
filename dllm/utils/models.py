@@ -117,6 +117,26 @@ def get_model(
                 transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
             ps.wait_for_everyone()
 
+    # --- Checkpoint Self-Containment Check ---
+    # If base_model_path is a directory, ensure it has the LLaDA code files for trust_remote_code
+    if os.path.isdir(base_model_path) and not os.path.exists(os.path.join(base_model_path, "configuration_llada.py")):
+        # Only do this for LLaDA models
+        is_llada = False
+        if os.path.exists(os.path.join(base_model_path, "config.json")):
+            with open(os.path.join(base_model_path, "config.json"), "r") as f:
+                import json
+                if json.load(f).get("model_type") == "llada": 
+                    is_llada = True
+        
+        if is_llada:
+            model_src = "dllm/pipelines/llada/models/"
+            if os.path.exists(model_src):
+                print_main(f"ℹ️ Rescuing missing modeling files in {base_model_path}...")
+                import shutil
+                for f in os.listdir(model_src):
+                    if f.endswith(".py"):
+                        shutil.copy2(os.path.join(model_src, f), base_model_path)
+
     try:
         # Detect model type to force local implementation if it's LLaDA
         # this ensures local features like loopholing (h_t) are available

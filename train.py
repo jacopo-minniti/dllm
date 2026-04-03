@@ -158,6 +158,17 @@ def main():
             train_flags.append(str(v))
     train_flags.extend(extra_args)
 
+    # 4b. Automation: Ensure custom modeling code is present in the output directory
+    # This ensures and enables `trust_remote_code=True` loading for checkpoints.
+    if "llada" in model_args.get("model_name_or_path", "").lower():
+        model_src = "dllm/pipelines/llada/models/"
+        if os.path.exists(model_src):
+            print(f"ℹ️ Copying LLaDA modeling files to {output_dir}...")
+            os.makedirs(output_dir, exist_ok=True)
+            for f in os.listdir(model_src):
+                if f.endswith(".py"):
+                    shutil.copy2(os.path.join(model_src, f), output_dir)
+
     # Handle accelerate config path
     acc_config = args.accelerate_config
     if not acc_config.endswith(".yaml"):
