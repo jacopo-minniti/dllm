@@ -146,6 +146,7 @@ def main():
     # 4. Prepare Training Command
     training = run_cfg["training"]
     script_path = training.pop("script_path", "examples/llada/sft.py")
+    training.pop("run_id", None)  # Consume run_id here to avoid HfArgumentParser errors in the subprocess
     training["output_dir"] = output_dir
     
     # 4a. Auto-resume logic
