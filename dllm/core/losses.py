@@ -120,7 +120,8 @@ class LoopholingBPTTLoss(nn.Module):
                 with torch.no_grad():
                     probs = torch.rand_like(masked_mask.float())
                     to_unmask = (probs < 0.5) & masked_mask
-                    input_ids[to_unmask] = labels[to_unmask]
+                    # Use out-of-place update to avoid autograd version mismatch
+                    input_ids = torch.where(to_unmask, labels, input_ids)
                 
                 h_t = h_s 
                 
@@ -139,10 +140,6 @@ class LoopholingBPTTPumaLoss(nn.Module):
         self.confidence_type = confidence_type
         self.weighted_ce = weighted_ce
 
-    def forward(self, model, streaming_batch, slots: Optional[torch.Tensor] = None, **kwargs):
-        total_loss = 0
-        final_outputs = None
-        
     def forward(self, model, streaming_batch, slots: Optional[torch.Tensor] = None, **kwargs):
         batch = streaming_batch.get_batch(slots=slots)
         input_ids = batch["input_ids"].clone() 
@@ -206,7 +203,8 @@ class LoopholingBPTTPumaLoss(nn.Module):
                         u = 1.0 - probs.max(dim=-1)[0]
                     
                     # For each sequence in the micro-batch, unmask some portion based on threshold
-                    # This is a simplified version of the StreamingBatch.update logic
+                    # Use out-of-place update to avoid autograd version mismatch (indices are saved by Embedding)
+                    new_input_ids = input_ids.clone()
                     for b in range(input_ids.shape[0]):
                         m_i = masked_mask[b]
                         if not m_i.any(): continue
@@ -216,7 +214,8 @@ class LoopholingBPTTPumaLoss(nn.Module):
                         # simplified cumsum thresholding
                         unmask_sub = torch.cumsum(v, dim=-1) < self.threshold
                         if not unmask_sub.any(): unmask_sub[0] = True
-                        input_ids[b, target_indices[unmask_sub]] = labels[b, target_indices[unmask_sub]]
+                        new_input_ids[b, target_indices[unmask_sub]] = labels[b, target_indices[unmask_sub]]
+                    input_ids = new_input_ids
 
                 h_t = h_s 
         
