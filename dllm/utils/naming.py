@@ -54,10 +54,12 @@ def get_experiment_naming(run_cfg, slurm_cfg):
         
     loss_type = str(training.get("loss_type", "mlm")).lower()
     is_puma = "puma" in loss_type
+    is_bptt = "bptt" in loss_type
     bptt_steps = _to_int(training.get("bptt_steps", 1))
     
     if is_puma: interventions.append("puma")
-    if bptt_steps > 1: interventions.append("bptt")
+    if is_bptt: interventions.append("bptt")
+    elif bptt_steps > 1: interventions.append("bptt")
 
     # Group: base_model-dataset-int1-int2 (sorted)
     group_parts = [base_model, dataset_slug]
@@ -99,7 +101,7 @@ def get_experiment_naming(run_cfg, slurm_cfg):
         th = training.get("puma_threshold", 0.15)
         name_parts.append(f"puma-th{th}")
         
-    if bptt_steps > 1:
+    if "bptt" in interventions:
         name_parts.append(f"bptt{bptt_steps}")
         
     if use_cab:
