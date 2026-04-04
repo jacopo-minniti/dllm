@@ -14,9 +14,8 @@ class MLMLoss(nn.Module):
         attention_mask = batch.get("attention_mask")
         
         maskable_mask = labels != -100
-        # Prime with masks if the input is clean (common in SFT collators)
-        if not (input_ids == self.mask_token_id).any():
-            input_ids[maskable_mask] = self.mask_token_id
+        # Always mask target positions in non-streaming losses to ensure a valid signal
+        input_ids[maskable_mask] = self.mask_token_id
 
         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits
@@ -89,9 +88,8 @@ class LoopholingBPTTLoss(nn.Module):
         attention_mask = batch.get("attention_mask")
         
         maskable_mask = labels != -100
-        # Prime with masks if input is clean
-        if not (input_ids == self.mask_token_id).any():
-            input_ids[maskable_mask] = self.mask_token_id
+        # Always mask target positions in non-streaming BPTT to ensure a valid signal
+        input_ids[maskable_mask] = self.mask_token_id
 
         h_t = None
         loss_terms = []
