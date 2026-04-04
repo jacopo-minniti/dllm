@@ -164,3 +164,44 @@ class WandbAlertCallback(transformers.TrainerCallback):
                 level="error"
             )
         return control
+
+
+class SlurmCheckpointCallback(transformers.TrainerCallback):
+    """
+    Callback that catches SIGTERM (sent by Slurm when a job is about to time out)
+    and triggers a checkpoint save before exiting gracefully.
+    """
+
+    def __init__(self):
+        self.sigterm_received = False
+        import signal
+        import sys
+        
+        # Register the signal handler on all ranks
+        signal.signal(signal.SIGTERM, self._handle_sigterm)
+
+    def _handle_sigterm(self, signum, frame):
+        self.sigterm_received = True
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if self.sigterm_received:
+            # Tell the trainer to save a full checkpoint and stop training
+            # Use 'SIGTERM' as the marker in the logs
+            print(f"Rank {args.local_rank} received SIGTERM (Slurm timeout). Requesting checkpoint save at step {state.global_step}...")
+            control.should_save = True
+            control.should_training_stop = True
+            
+            # Optionally send a WandB alert if we are on the main process
+            if state.is_world_process_zero:
+                try:
+                    import wandb
+                    if wandb.run is not None:
+                        group = os.getenv('WANDB_RUN_GROUP', 'none')
+                        wandb.alert(
+                            title="⚠️ Slurm Job Timeout/Preemption",
+                            text=f"*Group*: `{group}`\n*Step*: `{state.global_step}`\n*Status*: `Saving checkpoint and exiting...`",
+                            level=wandb.AlertLevel.WARN
+                        )
+                except:
+                    pass
+        return control

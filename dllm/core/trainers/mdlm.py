@@ -19,7 +19,7 @@ import transformers
 from ..schedulers import BaseAlphaScheduler, LinearAlphaScheduler
 from dllm.utils.configs import TrainingArguments
 from dllm.utils.data import prepend_bos
-from .utils import NLLMetric, PPLMetric, OnEvaluateMetricsCallback, WandbAlertCallback
+from .utils import NLLMetric, PPLMetric, OnEvaluateMetricsCallback, WandbAlertCallback, SlurmCheckpointCallback
 from ..losses import MLMLoss, PumaLoss, LoopholingBPTTLoss, LoopholingBPTTPumaLoss
 from dllm.data.streaming_batch import StreamingBatch
 
@@ -64,6 +64,7 @@ class MDLMTrainer(transformers.Trainer):
         )
         self.add_callback(self.meter)
         self.add_callback(WandbAlertCallback())
+        self.add_callback(SlurmCheckpointCallback())
 
         # Registry of loss functions
         self.loss_fns = {
