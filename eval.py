@@ -98,7 +98,8 @@ def main():
         f"export WANDB_RUN_GROUP=\"{wb.get('group', 'evals')}\"",
         f"export WANDB_TAGS=\"{wb.get('tags', '').replace(',', '|')}\"", # Use pipe as a safe intermediate
         "export PYTHONUNBUFFERED=1",
-        "export NCCL_DEBUG=INFO"
+        "export NCCL_DEBUG=INFO", 
+        "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=1200"
     ]
     
     # 3b. Automatic Naming and Directory Construction
