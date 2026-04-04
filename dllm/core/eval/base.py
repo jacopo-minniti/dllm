@@ -174,155 +174,199 @@ class BaseEvalHarness(LM):
     def generate_until(self, requests: list[Instance]) -> list[str]:
         # Track if we have a checkpoint path to resume from
         checkpoint_path = getattr(self.model_args, "eval_checkpoint", None)
-        processed_results = {}
+        processed_results = {} # ctx -> answer
+        processed_questions = {} # clean_q -> answer
         
+        def _extract_q(c):
+            """Helper to extract the main question from a prompt, skipping few-shots."""
+            for delimiter in ["Problem:", "Question:", "Input:", "Q:"]:
+                if delimiter in c:
+                    return c.split(delimiter)[-1].strip()
+            return c.strip()
+
         if checkpoint_path and os.path.exists(checkpoint_path):
-            print(f"🔄 Resuming evaluation from checkpoint: {checkpoint_path}")
+            if self.rank == 0:
+                print(f"🔄 Resuming evaluation from checkpoint: {checkpoint_path}")
             with open(checkpoint_path, "r") as f:
                 for line in f:
                     try:
                         data = json.loads(line)
-                        # Support both new 'question' and old 'context' keys for resume
-                        ctx = data.get("question", data.get("context"))
-                        if ctx:
-                            processed_results[ctx] = data["answer"]
+                        # Support 'question' (usually prompt), 'prompt' (clean prompt), and 'context' (old naming)
+                        ctx = data.get("prompt", data.get("question", data.get("context")))
+                        ans = data.get("answer")
+                        if ctx and ans is not None:
+                            processed_results[ctx] = ans
+                            # Also track by stable question text to handle few-shot variance
+                            processed_questions[_extract_q(ctx)] = ans
                     except Exception:
                         continue
-            print(f"✅ Loaded {len(processed_results)} existing results.")
+            if self.rank == 0:
+                print(f"✅ Loaded {len(processed_questions)} unique questions from existing results.")
 
         out: list[str] = [None] * len(requests)
         pending_indices = []
         
         for i, inst in enumerate(requests):
             ctx = inst.args[0]
+            q_text = _extract_q(ctx)
+            
             if ctx in processed_results:
                 out[i] = processed_results[ctx]
+            elif q_text in processed_questions:
+                # Question already answered but with a different prompt/few-shots
+                out[i] = processed_questions[q_text]
             else:
                 pending_indices.append(i)
         
-        if not pending_indices:
-            return out
+        # ── Distributed Splitting ────────────────────────────────
+        # If multiple ranks are running, ensure they don't overlap on pending work.
+        # This prevents race conditions where two ranks process the same question
+        # at the same time before it's written to the shared file.
+        if self.world_size > 1:
+            # We use an interleaved split of the pending indices
+            rank_pending_indices = [idx for idx in pending_indices if idx % self.world_size == self.rank]
+            if self.rank == 0:
+                print(f"🌐 Distributed Eval: Rank {self.rank} processing {len(rank_pending_indices)}/{len(pending_indices)} pending samples.")
+        else:
+            rank_pending_indices = pending_indices
 
-        # Process only pending requests
-        pending_requests = [requests[i] for i in pending_indices]
-        
-        for batch_start in tqdm(
-            range(0, len(pending_requests), self.batch_size), desc="Generating (Pending)..."
-        ):
-            batch_idxs = pending_indices[batch_start : batch_start + self.batch_size]
-            batch = [requests[i] for i in batch_idxs]
-            contexts, gen_kwargs_list = zip(*[inst.args for inst in batch])
+        if not rank_pending_indices:
+            # Still need to gather results at the end in case other ranks did work
+            pass
+        else:
+            # Process only this rank's subset
+            pending_requests = [requests[i] for i in rank_pending_indices]
+            
+            for batch_start in tqdm(
+                range(0, len(pending_requests), self.batch_size), 
+                desc=f"Generating (Rank {self.rank})",
+                disable=(self.rank != 0 and len(pending_requests) < 100) # Only show tqdm on non-zero ranks if lots of work
+            ):
+                batch_idxs = rank_pending_indices[batch_start : batch_start + self.batch_size]
+                batch = [requests[i] for i in batch_idxs]
+                contexts, gen_kwargs_list = zip(*[inst.args for inst in batch])
 
-            prompts = [
-                torch.tensor(
-                    self.tokenizer(ctx)["input_ids"],
-                    device=self._device,
-                    dtype=torch.long,
+                prompts = [
+                    torch.tensor(
+                        self.tokenizer(ctx)["input_ids"],
+                        device=self._device,
+                        dtype=torch.long,
+                    )
+                    for ctx in contexts
+                ]
+
+                generated_ids = self.sampler.sample(
+                    inputs=prompts,
+                    config=self.sampler_config,
+                    return_dict=False,
                 )
-                for ctx in contexts
-            ]
+                generated_answers = sample_trim(
+                    self.tokenizer,
+                    generated_ids.tolist(),
+                    [p.tolist() for p in prompts],
+                )
 
-            generated_ids = self.sampler.sample(
-                inputs=prompts,
-                config=self.sampler_config,
-                return_dict=False,
-            )
-            generated_answers = sample_trim(
-                self.tokenizer,
-                generated_ids.tolist(),
-                [p.tolist() for p in prompts],
-            )
-
-            # Post-process and checkpoint
-            new_saves = []
-            for j, (answer, gen_kwargs) in enumerate(zip(generated_answers, gen_kwargs_list)):
-                for stop_seq in gen_kwargs["until"]:
-                    if stop_seq in answer:
-                        answer = answer.split(stop_seq)[0]
-                
-                real_idx = batch_idxs[j]
-                out[real_idx] = answer
-                
-                if checkpoint_path:
-                    # Capture richer information if available
+                # Post-process and checkpoint
+                new_saves = []
+                for j, (answer, gen_kwargs) in enumerate(zip(generated_answers, gen_kwargs_list)):
+                    for stop_seq in gen_kwargs["until"]:
+                        if stop_seq in answer:
+                            answer = answer.split(stop_seq)[0]
+                    
                     real_idx = batch_idxs[j]
-                    inst = requests[real_idx]
+                    out[real_idx] = answer
                     
-                    # Extract ground truth solution
-                    doc = getattr(inst, "doc", None)
-                    raw_solution = ""
-                    if doc:
-                        for key in ["answer", "gold", "target", "solution"]:
-                            if key in doc:
-                                raw_solution = doc[key]
-                                break
-                    
-                    # Task-specific evaluation logic
-                    task_name = getattr(inst, "task_name", None)
-                    if not task_name and isinstance(inst.metadata, (list, tuple)) and len(inst.metadata) > 0:
-                        task_name = inst.metadata[0]
-                    
-                    is_correct = False
-                    if task_name:
-                        if not hasattr(self, "_task_objects"):
-                            self._task_objects = {}
+                    if checkpoint_path:
+                        inst = requests[real_idx]
                         
-                        if task_name not in self._task_objects:
-                            try:
-                                from lm_eval.tasks import get_task_dict
-                                self._task_objects[task_name] = get_task_dict([task_name])[task_name]
-                            except Exception:
-                                self._task_objects[task_name] = None
+                        # Extract ground truth solution
+                        doc = getattr(inst, "doc", None)
+                        raw_solution = ""
+                        if doc:
+                            for key in ["answer", "gold", "target", "solution"]:
+                                if key in doc:
+                                    raw_solution = doc[key]
+                                    break
                         
-                        task = self._task_objects.get(task_name)
-                        if task:
-                            # Use task's built-in evaluation logic
-                            res = task.process_results(doc, [answer])
-                            # Check if matches any metric with value 1 or True
-                            is_correct = any(bool(v == 1.0 or v is True) for v in res.values())
-                    
-                    if is_correct:
-                        if not hasattr(self, "_printed_correct_count"):
-                            self._printed_correct_count = {}
-                        t_name = task_name or "eval"
-                        count = self._printed_correct_count.get(t_name, 0)
+                        # Task-specific evaluation logic
+                        task_name = getattr(inst, "task_name", None)
+                        if not task_name and isinstance(inst.metadata, (list, tuple)) and len(inst.metadata) > 0:
+                            task_name = inst.metadata[0]
                         
-                        if count < 20:
-                            # Simple snippet for console logging
-                            snippet = answer[-200:] if len(answer) > 200 else answer
-                            print(f"Row {real_idx} | ✅ CORRECT (Match #{count + 1})")
-                            print(f"  Raw Solution: {raw_solution}")
-                            print(f"  Final Answer Snippet:\n  {snippet.strip()}")
-                            print("-" * 60)
-                            self._printed_correct_count[t_name] = count + 1
-                    
-                    # Reorder fields based on requirements:
-                    # first the ground truth solution, then the is_correct, 
-                    # then the question and finally the answer genrated by the model.
-                    save_record = {
-                        "solution": raw_solution,
-                        "is_correct": bool(is_correct),
-                        "question": contexts[j], 
-                        "answer": answer,
-                    }
-                    
-                    # Extract task name for logging if needed
-                    task_name = getattr(inst, "task_name", None)
-                    metadata = getattr(inst, "metadata", None)
-                    if not task_name and isinstance(metadata, (list, tuple)) and len(metadata) > 0:
-                        task_name = metadata[0]
-                    if task_name:
-                        save_record["task"] = task_name
+                        is_correct = False
+                        if task_name:
+                            if not hasattr(self, "_task_objects"):
+                                self._task_objects = {}
+                            
+                            if task_name not in self._task_objects:
+                                try:
+                                    from lm_eval.tasks import get_task_dict
+                                    self._task_objects[task_name] = get_task_dict([task_name])[task_name]
+                                except Exception:
+                                    self._task_objects[task_name] = None
+                            
+                            task = self._task_objects.get(task_name)
+                            if task:
+                                res = task.process_results(doc, [answer])
+                                is_correct = any(bool(v == 1.0 or v is True) for v in res.values())
+                        
+                        if is_correct and self.rank == 0:
+                            if not hasattr(self, "_printed_correct_count"):
+                                self._printed_correct_count = {}
+                            t_name = task_name or "eval"
+                            count = self._printed_correct_count.get(t_name, 0)
+                            
+                            if count < 5: # Reduced to 5 to avoid logging spam
+                                snippet = answer[-200:] if len(answer) > 200 else answer
+                                print(f"Row {real_idx} | ✅ CORRECT (Match #{count + 1})")
+                                print(f"  Raw Solution: {raw_solution}")
+                                print(f"  Final Answer Snippet:\n  {snippet.strip()}")
+                                print("-" * 60)
+                                self._printed_correct_count[t_name] = count + 1
+                        
+                        save_record = {
+                            "solution": raw_solution,
+                            "is_correct": bool(is_correct),
+                            "question": _extract_q(contexts[j]), # Save clean question
+                            "prompt": contexts[j], # Save full prompt separately
+                            "answer": answer,
+                        }
+                        
+                        if task_name:
+                            save_record["task"] = task_name
 
-                    new_saves.append(save_record)
+                        new_saves.append(save_record)
 
-            if checkpoint_path and new_saves:
-                with open(checkpoint_path, "a") as f:
-                    for item in new_saves:
-                        f.write(json.dumps(item) + "\n")
+                if checkpoint_path and new_saves:
+                    # Serialized file access via append is usually safe on shared filesystems,
+                    # but splitting by rank already prevents duplicate entries.
+                    with open(checkpoint_path, "a") as f:
+                        for item in new_saves:
+                            f.write(json.dumps(item) + "\n")
 
-            if self.accelerator is not None:
-                self.accelerator.wait_for_everyone()
+        # ── Final Result Synchronization ─────────────────────────
+        if self.world_size > 1:
+            if self.rank == 0:
+                print("🔄 Synchronizing results across ranks...")
+            
+            # Gather individual results to all ranks
+            all_rank_outs = self.gather_object(out)
+            
+            # Merge results: pick the non-None entry for each request
+            final_out = [None] * len(requests)
+            for rank_out in all_rank_outs:
+                for i, ans in enumerate(rank_out):
+                    if ans is not None:
+                        # If we have multiple answers for the same index (shouldn't happen with splitting),
+                        # the last one wins.
+                        final_out[i] = ans
+            
+            # Extra safety: ensure no None values are returned if we expected full results
+            missing = sum(1 for x in final_out if x is None)
+            if missing > 0 and self.rank == 0:
+                print(f"⚠️ Warning: {missing}/{len(requests)} requests have no results after merge.")
+            
+            return final_out
 
         return out
 
