@@ -10,9 +10,11 @@ import os
 import dataclasses
 import json
 import re
+from datetime import timedelta
 from dataclasses import dataclass
 
 import accelerate
+from accelerate.utils import InitProcessGroupKwargs
 import torch
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
@@ -77,7 +79,10 @@ class BaseEvalHarness(LM):
         device = kwargs.get("device", eval_config.device)
 
         # ── Distributed ──────────────────────────────────────────
-        accelerator = accelerate.Accelerator()
+        # Inference (especially diffusion) can be extremely slow per batch.
+        # We increase the NCCL timeout to 4 hours to prevent "Straggler" timeout errors.
+        timeout_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=14400))
+        accelerator = accelerate.Accelerator(kwargs_handlers=[timeout_kwargs])
         if torch.distributed.is_initialized():
             self._rank = torch.distributed.get_rank()
             self._world_size = torch.distributed.get_world_size()
