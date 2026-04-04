@@ -1,8 +1,8 @@
 # Slurm Resource Requests
 nodes: 1
 gpus_per_node: "l40s:4"
-time: "00:30:00"
-mem: "50G"
+time: "02:00:00"
+mem: "40G"
 cpus_per_task: 8
 ntasks_per_node: 1
 output: "./.logs/%x-%j.out"

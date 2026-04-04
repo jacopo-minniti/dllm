@@ -8,10 +8,11 @@ training:
   ddp_find_unused_parameters: False
 
   # Method: BPTT + CAB (K-step unrolling)
-  loss_type: "bptt"                 # Replaces PUMA with recursive BPTT
-  bptt_steps: 4                    # Unroll K=2 steps for true gradient flow 
+  loss_type: "puma_bptt"
+  puma_threshold: 0.15  
+  bptt_steps: 2           
   lora: False
-  r: 32                            
+  r: 32
   lora_alpha: 64                   
   lora_dropout: 0.05               
   target_modules: "all-linear"     
@@ -21,10 +22,11 @@ training:
   cab_bottleneck_dim: 512
   cab_mlp_expansion_dim: 1024
   
+  
   # Hyperparameters
   num_train_epochs: 3
   learning_rate: 2e-05
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 4
   gradient_accumulation_steps: 8
   lr_scheduler_type: "linear"
   warmup_ratio: 0.1
