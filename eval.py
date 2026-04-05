@@ -99,7 +99,9 @@ def main():
         f"export WANDB_TAGS=\"{wb.get('tags', '').replace(',', '|')}\"", # Use pipe as a safe intermediate
         "export PYTHONUNBUFFERED=1",
         "export NCCL_DEBUG=INFO", 
-        "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=1200"
+        "export NCCL_ASYNC_ERROR_HANDLING=1",
+        "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=43200",   # 12-hour timeout for slow diffusion
+        "export ACCELERATE_TIMEOUT_IN_SECONDS=43200"       # Also set for accelerate specifically
     ]
     
     # 3b. Automatic Naming and Directory Construction
@@ -212,7 +214,7 @@ echo "Launching Evaluation: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_AD
 
 # ===== Execution =====
 srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" \\
-  bash -c "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=43200 && accelerate launch \\
+  bash -c "accelerate launch \\
   --config_file '{acc_config}' \\
   --num_machines '${{NUM_NODES}}' \\
   --num_processes '${{WORLD_SIZE}}' \\
