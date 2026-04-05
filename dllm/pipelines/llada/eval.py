@@ -73,4 +73,9 @@ if __name__ == "__main__":
             break
     
     seed_everything(eval_seed)
-    cli_evaluate()
+    try:
+        cli_evaluate()
+    finally:
+        import torch.distributed as dist
+        if dist.is_initialized():
+            dist.destroy_process_group()

@@ -27,9 +27,8 @@ class MLMLoss(nn.Module):
             ignore_index=-100
         )
         
-        # Only compute loss on masked tokens (that are maskable)
-        masked_mask = (input_ids == self.mask_token_id) & maskable_mask
-        loss = (loss * masked_mask.float()).sum() / masked_mask.float().sum().clamp_min(1)
+        # Original MLM: Global sequence mean (including zero loss at unmasked/ignored positions)
+        loss = (loss * masked_mask.float()).sum() / input_ids.numel()
         
         return loss, outputs
 
@@ -62,8 +61,8 @@ class PumaLoss(nn.Module):
             reduction="none",
             ignore_index=-100
         )
-        # Fix average: Normalize by CURRENTLY masked tokens to match original repo
-        loss = loss.sum() / masked_mask.float().sum().clamp_min(1)
+        # Original PumaLoss: Per-token average over currently masked tokens
+        loss = (loss * masked_mask.float()).sum() / masked_mask.float().sum().clamp_min(1)
         
         # Update streaming batch (On-policy unmasking) - only for these slots
         streaming_batch.update(
@@ -111,7 +110,7 @@ class LoopholingBPTTLoss(nn.Module):
                 reduction="none",
                 ignore_index=-100
             )
-            # Gate loss by current masks
+            # Original BPTT: Per-token average over currently masked tokens in this step
             loss_t = (loss_t * masked_mask.float()).sum() / masked_mask.float().sum().clamp_min(1)
             loss_terms.append(loss_t)
             
@@ -129,7 +128,8 @@ class LoopholingBPTTLoss(nn.Module):
             total_loss = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
             return total_loss, None
 
-        return sum(loss_terms) / len(loss_terms), outputs
+        # Original BPTT: Sum of step-wise averages
+        return sum(loss_terms), outputs
 
 class LoopholingBPTTPumaLoss(nn.Module):
     def __init__(self, mask_token_id: int, threshold: float = 0.15, num_steps: int = 2, confidence_type: str = "top_prob", weighted_ce: bool = False):
@@ -185,6 +185,7 @@ class LoopholingBPTTPumaLoss(nn.Module):
                     weights = 1.0 + conf
                 loss_t = loss_t * weights
 
+            # Original Puma BPTT: Per-token average over currently masked tokens in this step
             loss_t = (loss_t * masked_mask.float()).sum() / masked_mask.float().sum().clamp_min(1)
             loss_terms.append(loss_t)
             
@@ -223,7 +224,8 @@ class LoopholingBPTTPumaLoss(nn.Module):
             total_loss = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
             return total_loss, final_outputs
 
-        total_loss = sum(loss_terms) / len(loss_terms)
+        # Original Puma BPTT: Sum of step-wise averages
+        total_loss = sum(loss_terms)
 
         # Update the persistent buffer with the final state from the loop
         with torch.no_grad():

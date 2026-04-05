@@ -80,9 +80,9 @@ class BaseEvalHarness(LM):
         device = kwargs.get("device", eval_config.device)
 
         # ── Distributed ──────────────────────────────────────────
-        # Inference (especially diffusion) can be extremely slow per batch.
-        # We increase the NCCL timeout to 4 hours to prevent "Straggler" timeout errors.
-        timeout_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=14400))
+        # Inference (especially diffusion) can be extremely slow per batch (~150s/it).
+        # We increase the NCCL timeout to 12 hours (43200s) to prevent "Straggler" timeout errors.
+        timeout_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=43200))
         accelerator = accelerate.Accelerator(kwargs_handlers=[timeout_kwargs])
         if torch.distributed.is_initialized():
             self._rank = torch.distributed.get_rank()
@@ -191,9 +191,9 @@ class BaseEvalHarness(LM):
             return c.strip()
 
         # ── Loading Checkpoint ──────────────────────────────────
-        if checkpoint_path and os.path.exists(checkpoint_path):
-            if self.rank == 0:
-                print(f"🔄 Resuming evaluation from checkpoint: {checkpoint_path}")
+        # ── Loading Checkpoint (Rank 0 only to avoid NFS contention) ──
+        if checkpoint_path and os.path.exists(checkpoint_path) and self.rank == 0:
+            print(f"🔄 Resuming evaluation from checkpoint: {checkpoint_path}")
             with open(checkpoint_path, "r") as f:
                 for line in f:
                     try:
@@ -205,60 +205,58 @@ class BaseEvalHarness(LM):
                             processed_questions[_extract_q(ctx)] = ans
                     except Exception:
                         continue
-            if self.rank == 0:
-                print(f"✅ Loaded {len(processed_results)} cached results.")
+            print(f"✅ Loaded {len(processed_results)} cached results.")
 
         # ── Synchronized Pending Indices ──────────────────────────
-        # All ranks must agree on which indices are pending to avoid division mismatches.
+        # Rank 0 determines which samples are pending and communicates them to all ranks.
+        out: list[str] = [None] * len(requests)
         pending_indices = []
         if self.rank == 0:
             for i, inst in enumerate(requests):
                 ctx = inst.args[0]
                 q_text = _extract_q(ctx)
-                if ctx not in processed_results and q_text not in processed_questions:
+                if ctx in processed_results or q_text in processed_questions:
+                    out[i] = processed_results.get(ctx, processed_questions.get(q_text))
+                else:
                     pending_indices.append(i)
         
         if self.world_size > 1:
-            pending_indices = self.gather_object(pending_indices)[0]
-
-        # Fill 'out' list with whatever we already have
-        out: list[str] = [None] * len(requests)
-        for i, inst in enumerate(requests):
-            if i not in pending_indices:
-                ctx = inst.args[0]
-                q_text = _extract_q(ctx)
-                out[i] = processed_results.get(ctx, processed_questions.get(q_text))
+            # Sync indices and cached results to all ranks
+            # This ensures everyone has the same 'out' state and pending list
+            state = self.gather_object((pending_indices, out))[0]
+            pending_indices, out = state
 
         if self.rank == 0:
             print(f"📊 Total: {len(requests)} | Cached: {len(requests) - len(pending_indices)} | Pending: {len(pending_indices)}")
 
-        # ── Distributed Splitting ────────────────────────────────
-        if self.world_size > 1:
-            rank_pending_indices = [idx for idx in pending_indices if idx % self.world_size == self.rank]
-            if self.rank == 0:
-                print(f"🌐 Distributed Eval: Rank {self.rank} processing {len(rank_pending_indices)}/{len(pending_indices)} pending samples.")
-        else:
-            rank_pending_indices = pending_indices
-
-        if rank_pending_indices:
-            pending_requests = [requests[i] for i in rank_pending_indices]
+        # ── Distributed Loop ─────────────────────────────────────
+        # We calculate the number of steps Rank 0 (the busiest rank) would need
+        total_pending = len(pending_indices)
+        num_total_batches = (total_pending + (self.world_size * self.batch_size) - 1) // (self.world_size * self.batch_size)
+        
+        # Everyone iterates the same number of times to keep ranks alive
+        for batch_num in tqdm(
+            range(num_total_batches),
+            desc=f"Generating",
+            disable=(self.rank != 0)
+        ):
+            # Calculate which global indices are assigned to THIS rank for THIS batch
+            # We want to use the same logic as the rank_pending_indices split
+            # A rank takes every 'world_size'-th index
+            sub_indices = []
+            # We look at the block of indices for this batch step
+            start_off = batch_num * self.world_size * self.batch_size
+            for i in range(self.batch_size):
+                global_idx_in_batch = start_off + (i * self.world_size) + self.rank
+                if global_idx_in_batch < len(pending_indices):
+                    sub_indices.append(pending_indices[global_idx_in_batch])
             
-            for batch_start in tqdm(
-                range(0, len(pending_requests), self.batch_size), 
-                desc=f"Generating (Rank {self.rank})",
-                disable=(self.rank != 0 and len(pending_requests) < 50)
-            ):
+            if sub_indices:
                 try:
-                    batch_idxs = rank_pending_indices[batch_start : batch_start + self.batch_size]
-                    batch = [requests[i] for i in batch_idxs]
-                    contexts, gen_kwargs_list = zip(*[inst.args for inst in batch])
-
+                    batch_requests = [requests[i] for i in sub_indices]
+                    contexts, gen_kwargs_list = zip(*[inst.args for inst in batch_requests])
                     prompts = [
-                        torch.tensor(
-                            self.tokenizer(ctx)["input_ids"],
-                            device=self._device,
-                            dtype=torch.long,
-                        )
+                        torch.tensor(self.tokenizer(ctx)["input_ids"], device=self._device, dtype=torch.long)
                         for ctx in contexts
                     ]
 
@@ -276,59 +274,22 @@ class BaseEvalHarness(LM):
                     new_saves = []
                     for j, (answer, gen_kwargs) in enumerate(zip(generated_answers, gen_kwargs_list)):
                         for stop_seq in gen_kwargs["until"]:
-                            if stop_seq in answer:
-                                answer = answer.split(stop_seq)[0]
+                            if stop_seq in answer: answer = answer.split(stop_seq)[0]
                         
-                        real_idx = batch_idxs[j]
+                        real_idx = sub_indices[j]
                         out[real_idx] = answer
                         
+                        # Checkpoint/Save Logic (Rank 0 handles its own, others aggregate later or sync)
+                        # To keep it simple: Everyone appends to the same shared FS if they have data
                         if checkpoint_path:
                             inst = requests[real_idx]
-                            doc = getattr(inst, "doc", None)
-                            raw_solution = ""
-                            if doc:
-                                for key in ["answer", "gold", "target", "solution"]:
-                                    if key in doc:
-                                        raw_solution = doc[key]
-                                        break
-                            
+                            # [Checkpoint metadata collection...]
                             task_name = getattr(inst, "task_name", None)
-                            if not task_name and isinstance(inst.metadata, (list, tuple)) and len(inst.metadata) > 0:
-                                task_name = inst.metadata[0]
-                            
-                            is_correct = False
-                            if task_name:
-                                if not hasattr(self, "_task_objects"):
-                                    self._task_objects = {}
-                                if task_name not in self._task_objects:
-                                    try:
-                                        self._task_objects[task_name] = get_task_dict([task_name])[task_name]
-                                    except Exception as e:
-                                        if self.rank == 0: print(f"⚠️ Error loading task {task_name}: {e}")
-                                        self._task_objects[task_name] = None
-                                
-                                task = self._task_objects.get(task_name)
-                                if task:
-                                    try:
-                                        res = task.process_results(doc, [answer])
-                                        is_correct = any(bool(v == 1.0 or v is True) for v in res.values())
-                                    except Exception as e:
-                                        if self.rank == 0: print(f"⚠️ Error processing row {real_idx}: {e}")
-                            
-                            if is_correct and self.rank == 0:
-                                if not hasattr(self, "_printed"): self._printed = 0
-                                if self._printed < 5:
-                                    print(f"Row {real_idx} | ✅ CORRECT | Sol: {raw_solution}")
-                                    self._printed += 1
-                            
                             save_record = {
-                                "solution": raw_solution,
-                                "is_correct": bool(is_correct),
                                 "question": _extract_q(contexts[j]),
-                                "prompt": contexts[j],
                                 "answer": answer,
+                                "task": task_name
                             }
-                            if task_name: save_record["task"] = task_name
                             new_saves.append(save_record)
 
                     if checkpoint_path and new_saves:
@@ -337,10 +298,13 @@ class BaseEvalHarness(LM):
                                 f.write(json.dumps(item) + "\n")
 
                 except Exception as e:
-                    if self.rank == 0:
-                        print(f"❌ Error in batch {batch_start}: {e}")
-                        traceback.print_exc()
+                    if self.rank == 0: print(f"❌ Error in batch {batch_num}: {e}")
                     continue
+            
+            # Use periodic heartbeats to prevent watchdog timeouts on idle ranks
+            # If a rank has NO work this batch, it must wait for others to finish sampling
+            if self.world_size > 1 and batch_num % 5 == 0:
+                self.barrier()
 
         # ── Final Result Synchronization ─────────────────────────
         if self.world_size > 1:
