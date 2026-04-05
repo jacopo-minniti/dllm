@@ -99,7 +99,7 @@ def main():
         f"export WANDB_TAGS=\"{wb.get('tags', '').replace(',', '|')}\"", # Use pipe as a safe intermediate
         "export PYTHONUNBUFFERED=1",
         "export NCCL_DEBUG=INFO", 
-        "export NCCL_ASYNC_ERROR_HANDLING=1",
+        "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
         "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=43200",   # 12-hour timeout for slow diffusion
         "export ACCELERATE_TIMEOUT_IN_SECONDS=43200"       # Also set for accelerate specifically
     ]

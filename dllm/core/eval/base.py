@@ -234,10 +234,13 @@ class BaseEvalHarness(LM):
                         out[real_idx] = answer
 
             except Exception as e:
-                if self.rank == 0:
-                    print(f"❌ Error in batch {batch_num}: {e}")
-                    traceback.print_exc()
-                continue
+                # Print the error regardless of the rank so you can diagnose the real issue
+                print(f"❌ Error on Rank {self.rank} in batch {batch_num}: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                # Raise the exception to kill the job instantly instead of hanging the other GPUs
+                raise e
 
         # ── Final Result Synchronization ─────────────────────────
         if self.world_size > 1:
