@@ -119,14 +119,15 @@ def main():
     task_slug, model_slug, checkpoint_name, params_slug, output_path = get_eval_naming(evaluation)
     
     # Configure results storage
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    evaluation["output_path"] = os.path.dirname(output_path)
-    model_args["eval_checkpoint"] = output_path
+    # Use output_path stripped of extension as a unique directory for this run
+    output_dir = output_path.rsplit(".", 1)[0]
+    os.makedirs(output_dir, exist_ok=True)
+    evaluation["output_path"] = output_dir
     
     print(f"📦 Task: {task_slug}")
     print(f"📦 Model: {model_slug} ({checkpoint_name})")
     print(f"📦 Params: {params_slug}")
-    print(f"📦 Results: {output_path}")
+    print(f"📦 Results Dir: {output_dir}")
 
     # ── Determinism ──────────────────────────────────────────
     seed = evaluation.get("seed", 42)

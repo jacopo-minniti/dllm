@@ -8,8 +8,6 @@ Run: Not runnable directly; use pipeline eval entrypoints (e.g. dllm.pipelines.l
 
 import os
 import dataclasses
-import json
-import re
 import traceback
 from datetime import timedelta
 from dataclasses import dataclass
@@ -19,7 +17,6 @@ from accelerate.utils import InitProcessGroupKwargs
 import torch
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
-from lm_eval.tasks import get_task_dict
 from tqdm import tqdm
 
 from ..samplers import BaseSampler, BaseSamplerConfig
@@ -178,61 +175,11 @@ class BaseEvalHarness(LM):
     # ── Unified generate_until scaffolding ────────────────────────────
     @torch.no_grad()
     def generate_until(self, requests: list[Instance]) -> list[str]:
-        # Track if we have a checkpoint path to resume from
-        checkpoint_path = getattr(self.model_args, "eval_checkpoint", None)
-        processed_results = {} # ctx -> answer
-        processed_questions = {} # clean_q -> answer
-        
-        def _extract_q(c):
-            """Helper to extract the main question from a prompt, skipping few-shots."""
-            for delimiter in ["Problem:", "Question:", "Input:", "Q:"]:
-                if delimiter in c:
-                    return c.split(delimiter)[-1].strip()
-            return c.strip()
-
-        # ── Loading Checkpoint ──────────────────────────────────
-        # ── Loading Checkpoint (Rank 0 only to avoid NFS contention) ──
-        if checkpoint_path and os.path.exists(checkpoint_path) and self.rank == 0:
-            print(f"🔄 Resuming evaluation from checkpoint: {checkpoint_path}")
-            with open(checkpoint_path, "r") as f:
-                for line in f:
-                    try:
-                        data = json.loads(line)
-                        ctx = data.get("prompt", data.get("question", data.get("context")))
-                        ans = data.get("answer")
-                        if ctx and ans is not None:
-                            processed_results[ctx] = ans
-                            processed_questions[_extract_q(ctx)] = ans
-                    except Exception:
-                        continue
-            print(f"✅ Loaded {len(processed_results)} cached results.")
-
-        # ── Synchronized Pending Indices ──────────────────────────
-        # Rank 0 determines which samples are pending and communicates them to all ranks.
+        # ── Distributed Setup ─────────────────────────────────────
         out: list[str] = [None] * len(requests)
-        pending_indices = []
-        if self.rank == 0:
-            for i, inst in enumerate(requests):
-                ctx = inst.args[0]
-                q_text = _extract_q(ctx)
-                if ctx in processed_results or q_text in processed_questions:
-                    out[i] = processed_results.get(ctx, processed_questions.get(q_text))
-                else:
-                    pending_indices.append(i)
         
-        if self.world_size > 1:
-            # Sync indices and cached results to all ranks
-            # This ensures everyone has the same 'out' state and pending list
-            state = self.gather_object((pending_indices, out))[0]
-            pending_indices, out = state
-
-        if self.rank == 0:
-            print(f"📊 Total: {len(requests)} | Cached: {len(requests) - len(pending_indices)} | Pending: {len(pending_indices)}")
-
-        # ── Distributed Loop ─────────────────────────────────────
-        # We calculate the number of steps Rank 0 (the busiest rank) would need
-        total_pending = len(pending_indices)
-        num_total_batches = (total_pending + (self.world_size * self.batch_size) - 1) // (self.world_size * self.batch_size)
+        # Determine number of batches needed
+        num_total_batches = (len(requests) + (self.world_size * self.batch_size) - 1) // (self.world_size * self.batch_size)
         
         # Everyone iterates the same number of times to keep ranks alive
         for batch_num in tqdm(
@@ -241,70 +188,50 @@ class BaseEvalHarness(LM):
             disable=(self.rank != 0)
         ):
             # Calculate which global indices are assigned to THIS rank for THIS batch
-            # We want to use the same logic as the rank_pending_indices split
-            # A rank takes every 'world_size'-th index
             sub_indices = []
-            # We look at the block of indices for this batch step
             start_off = batch_num * self.world_size * self.batch_size
             for i in range(self.batch_size):
                 global_idx_in_batch = start_off + (i * self.world_size) + self.rank
-                if global_idx_in_batch < len(pending_indices):
-                    sub_indices.append(pending_indices[global_idx_in_batch])
+                if global_idx_in_batch < len(requests):
+                    sub_indices.append(global_idx_in_batch)
             
-            if sub_indices:
-                try:
-                    batch_requests = [requests[i] for i in sub_indices]
-                    contexts, gen_kwargs_list = zip(*[inst.args for inst in batch_requests])
-                    prompts = [
-                        torch.tensor(self.tokenizer(ctx)["input_ids"], device=self._device, dtype=torch.long)
-                        for ctx in contexts
-                    ]
+            try:
+                # IMPORTANT: All ranks MUST call the sampler every iteration, even if they have 0 samples.
+                batch_requests = [requests[i] for i in sub_indices] if sub_indices else []
+                contexts = [inst.args[0] for inst in batch_requests]
+                prompts = [
+                    torch.tensor(self.tokenizer(ctx)["input_ids"], device=self._device, dtype=torch.long)
+                    for ctx in contexts
+                ]
 
-                    generated_ids = self.sampler.sample(
-                        inputs=prompts,
-                        config=self.sampler_config,
-                        return_dict=False,
-                    )
+                # Distributed sync point (implicit if model is wrapped in FSDP/DDP)
+                generated_ids = self.sampler.sample(
+                    inputs=prompts,
+                    config=self.sampler_config,
+                    return_dict=False,
+                )
+
+                if sub_indices:
+                    _, gen_kwargs_list = zip(*[inst.args for inst in batch_requests])
                     generated_answers = sample_trim(
                         self.tokenizer,
                         generated_ids.tolist(),
                         [p.tolist() for p in prompts],
                     )
 
-                    new_saves = []
                     for j, (answer, gen_kwargs) in enumerate(zip(generated_answers, gen_kwargs_list)):
                         for stop_seq in gen_kwargs["until"]:
-                            if stop_seq in answer: answer = answer.split(stop_seq)[0]
+                            if stop_seq in answer:
+                                answer = answer.split(stop_seq)[0]
                         
                         real_idx = sub_indices[j]
                         out[real_idx] = answer
-                        
-                        # Checkpoint/Save Logic (Rank 0 handles its own, others aggregate later or sync)
-                        # To keep it simple: Everyone appends to the same shared FS if they have data
-                        if checkpoint_path:
-                            inst = requests[real_idx]
-                            # [Checkpoint metadata collection...]
-                            task_name = getattr(inst, "task_name", None)
-                            save_record = {
-                                "question": _extract_q(contexts[j]),
-                                "answer": answer,
-                                "task": task_name
-                            }
-                            new_saves.append(save_record)
 
-                    if checkpoint_path and new_saves:
-                        with open(checkpoint_path, "a") as f:
-                            for item in new_saves:
-                                f.write(json.dumps(item) + "\n")
-
-                except Exception as e:
-                    if self.rank == 0: print(f"❌ Error in batch {batch_num}: {e}")
-                    continue
-            
-            # Use periodic heartbeats to prevent watchdog timeouts on idle ranks
-            # If a rank has NO work this batch, it must wait for others to finish sampling
-            if self.world_size > 1 and batch_num % 5 == 0:
-                self.barrier()
+            except Exception as e:
+                if self.rank == 0:
+                    print(f"❌ Error in batch {batch_num}: {e}")
+                    traceback.print_exc()
+                continue
 
         # ── Final Result Synchronization ─────────────────────────
         if self.world_size > 1:
