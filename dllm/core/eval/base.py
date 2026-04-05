@@ -175,49 +175,57 @@ class BaseEvalHarness(LM):
     # ── Unified generate_until scaffolding ────────────────────────────
     @torch.no_grad()
     def generate_until(self, requests: list[Instance]) -> list[str]:
-        # ── Distributed Setup ─────────────────────────────────────
-        out: list[str] = [None] * len(requests)
+        # lm-eval has already sharded the dataset across ranks.
+        # We just iterate through our local chunk.
+        num_local_requests = len(requests)
+        out: list[str] = [None] * num_local_requests
         
-        # Determine number of batches needed
-        num_total_batches = (len(requests) + (self.world_size * self.batch_size) - 1) // (self.world_size * self.batch_size)
+        # To handle uneven shards (e.g. 501 items on 4 GPUs), we must sync the max iterations.
+        import torch.distributed as dist
+        if dist.is_initialized():
+            max_req_tensor = torch.tensor([num_local_requests], device=self._device)
+            dist.all_reduce(max_req_tensor, op=dist.ReduceOp.MAX)
+            max_requests = max_req_tensor.item()
+        else:
+            max_requests = num_local_requests
+
+        num_batches = (max_requests + self.batch_size - 1) // self.batch_size
         
-        # Everyone iterates the same number of times to keep ranks alive
         from tqdm import tqdm
         import sys
-        
+
         for batch_num in tqdm(
-            range(num_total_batches),
-            desc=f"Generating",
-            disable=(self.rank != 0),
+            range(num_batches),
+            desc=f"Generating Rank {self.rank}",
             file=sys.stdout,
+            disable=(self.rank != 0),
             mininterval=1.0,
-            maxinterval=5.0
         ):
-            # Calculate which global indices are assigned to THIS rank for THIS batch
-            sub_indices = []
-            start_off = batch_num * self.world_size * self.batch_size
-            for i in range(self.batch_size):
-                global_idx_in_batch = start_off + (i * self.world_size) + self.rank
-                if global_idx_in_batch < len(requests):
-                    sub_indices.append(global_idx_in_batch)
+            start_idx = batch_num * self.batch_size
+            end_idx = min(start_idx + self.batch_size, num_local_requests)
+            
+            # If this rank has fewer items than others in the final batch, 
+            # it must still call the sampler with an empty list to stay in sync.
+            if start_idx < num_local_requests:
+                batch_requests = requests[start_idx:end_idx]
+            else:
+                batch_requests = []
             
             try:
-                # IMPORTANT: All ranks MUST call the sampler every iteration, even if they have 0 samples.
-                batch_requests = [requests[i] for i in sub_indices] if sub_indices else []
                 contexts = [inst.args[0] for inst in batch_requests]
                 prompts = [
                     torch.tensor(self.tokenizer(ctx)["input_ids"], device=self._device, dtype=torch.long)
                     for ctx in contexts
                 ]
 
-                # Distributed sync point (implicit if model is wrapped in FSDP/DDP)
+                # All ranks MUST call the sampler simultaneously for DDP sync
                 generated_ids = self.sampler.sample(
                     inputs=prompts,
                     config=self.sampler_config,
                     return_dict=False,
                 )
 
-                if sub_indices:
+                if batch_requests:
                     _, gen_kwargs_list = zip(*[inst.args for inst in batch_requests])
                     generated_answers = sample_trim(
                         self.tokenizer,
@@ -230,36 +238,13 @@ class BaseEvalHarness(LM):
                             if stop_seq in answer:
                                 answer = answer.split(stop_seq)[0]
                         
-                        real_idx = sub_indices[j]
-                        out[real_idx] = answer
+                        out[start_idx + j] = answer
 
             except Exception as e:
-                # Print the error regardless of the rank so you can diagnose the real issue
                 print(f"❌ Error on Rank {self.rank} in batch {batch_num}: {e}")
                 import traceback
                 traceback.print_exc()
-                
-                # Raise the exception to kill the job instantly instead of hanging the other GPUs
                 raise e
-
-        # ── Final Result Synchronization ─────────────────────────
-        if self.world_size > 1:
-            if self.rank == 0:
-                print("🔄 Synchronizing results across ranks...")
-            
-            all_rank_outs = self.gather_object(out)
-            final_out = [None] * len(requests)
-            for rank_out in all_rank_outs:
-                if rank_out is None: continue
-                for i, ans in enumerate(rank_out):
-                    if ans is not None:
-                        final_out[i] = ans
-            
-            missing = sum(1 for x in final_out if x is None)
-            if missing > 0 and self.rank == 0:
-                print(f"⚠️ Warning: {missing}/{len(requests)} requests missing results.")
-            
-            return final_out
 
         return out
 
