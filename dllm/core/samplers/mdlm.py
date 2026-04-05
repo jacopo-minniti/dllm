@@ -105,12 +105,16 @@ class MDLMSampler(BaseSampler):
                 [bos_id] if isinstance(p, list) and len(p) == 0 else p for p in inputs
             ]
 
-        if inputs and isinstance(inputs[0], list):
-            inputs = [
-                torch.as_tensor(p, dtype=torch.long, device=self.model.device)
-                for p in inputs
-            ]
-        
+        # Ensure all inputs are tensors on the correct device
+        if inputs:
+            new_inputs = []
+            for p in inputs:
+                if not isinstance(p, torch.Tensor):
+                    new_inputs.append(torch.as_tensor(p, dtype=torch.long, device=self.model.device))
+                else:
+                    new_inputs.append(p.to(self.model.device))
+            inputs = new_inputs
+
         # Get prompt lengths
         prompt_lens = [p.shape[0] for p in inputs]
         
@@ -119,17 +123,25 @@ class MDLMSampler(BaseSampler):
         import torch.distributed as dist
         if dist.is_initialized():
             local_max = max(prompt_lens) if prompt_lens else 0
-            max_p_len_tensor = torch.tensor([local_max], device=self.model.device)
+            max_p_len_tensor = torch.tensor([local_max], device=self.model.device, dtype=torch.long)
             dist.all_reduce(max_p_len_tensor, op=dist.ReduceOp.MAX)
-            max_prompt_len = max_p_len_tensor.item()
+            max_prompt_len = int(max_p_len_tensor.item())
         else:
             max_prompt_len = max(prompt_lens) if prompt_lens else 0
 
+        # Enforce that T is large enough for both the prompt and the new tokens
         if max_new_tokens:
+            max_new_tokens = int(max_new_tokens)
             max_length = max_new_tokens + max_prompt_len
-        else:
-            # If max_length is provided instead of max_new_tokens
+        elif max_length:
+            max_length = int(max_length)
+            # Safety: Ensure max_length doesn't truncate the prompt
+            max_length = max(max_length, max_prompt_len + 1)
             max_new_tokens = max_length - max_prompt_len
+        else:
+            # Fallback
+            max_new_tokens = 128
+            max_length = max_prompt_len + max_new_tokens
 
         B = len(inputs)
         T = max_length
