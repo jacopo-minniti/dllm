@@ -97,24 +97,37 @@ class MDLMSampler(BaseSampler):
         # Also support EOT if available
         eot_id = getattr(self.tokenizer, "eot_token_id", None)
 
-        # ----- Shape bookkeeping: per-sample prompt lengths and final canvas width -----
         # If right_shift_logits is true and a sequence has length 0, replace that sequence with [bos].
         if right_shift_logits:
             inputs = [
                 [bos_id] if isinstance(p, list) and len(p) == 0 else p for p in inputs
             ]
 
-        if isinstance(inputs[0], list):
+        if inputs and isinstance(inputs[0], list):
             inputs = [
                 torch.as_tensor(p, dtype=torch.long, device=self.model.device)
                 for p in inputs
             ]
+        
+        # Get prompt lengths
         prompt_lens = [p.shape[0] for p in inputs]
+        
+        # In distributed settings, we must ensure all ranks have a consistent max prompt length
+        # even if some ranks have 0 samples. 
+        import torch.distributed as dist
+        if dist.is_initialized():
+            local_max = max(prompt_lens) if prompt_lens else 0
+            max_p_len_tensor = torch.tensor([local_max], device=self.model.device)
+            dist.all_reduce(max_p_len_tensor, op=dist.ReduceOp.MAX)
+            max_prompt_len = max_p_len_tensor.item()
+        else:
+            max_prompt_len = max(prompt_lens) if prompt_lens else 0
 
         if max_new_tokens:
-            max_length = max_new_tokens + max(prompt_lens)
+            max_length = max_new_tokens + max_prompt_len
         else:
-            max_new_tokens = max_length - max(prompt_lens)
+            # If max_length is provided instead of max_new_tokens
+            max_new_tokens = max_length - max_prompt_len
 
         B = len(inputs)
         T = max_length

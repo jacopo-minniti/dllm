@@ -212,6 +212,7 @@ echo "Launching Evaluation: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_AD
 # ===== Execution =====
 srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" \\
   bash -c "accelerate launch \\
+  --timeout 43200 \\
   --config_file '{acc_config}' \\
   --num_machines '${{NUM_NODES}}' \\
   --num_processes '${{WORLD_SIZE}}' \\
