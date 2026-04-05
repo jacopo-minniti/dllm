@@ -182,10 +182,16 @@ class BaseEvalHarness(LM):
         num_total_batches = (len(requests) + (self.world_size * self.batch_size) - 1) // (self.world_size * self.batch_size)
         
         # Everyone iterates the same number of times to keep ranks alive
+        from tqdm import tqdm
+        import sys
+        
         for batch_num in tqdm(
             range(num_total_batches),
             desc=f"Generating",
-            disable=(self.rank != 0)
+            disable=(self.rank != 0),
+            file=sys.stdout,
+            mininterval=1.0,
+            maxinterval=5.0
         ):
             # Calculate which global indices are assigned to THIS rank for THIS batch
             sub_indices = []

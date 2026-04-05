@@ -82,12 +82,14 @@ class MDLMSampler(BaseSampler):
         confidence_type = kwargs.get("confidence_type", config.confidence_type)
 
         # Logging for confidence-based unmasking confirmation
-        print(f"--- Sampling Configuration ---")
-        print(f"Steps: {steps}, Max New Tokens: {max_new_tokens}, Block Size: {block_size}")
-        print(f"Temperature: {temperature}, Remasking: {remasking}")
-        print(f"CFG Scale: {cfg_scale}, Stochastic Transfer: {stochastic_transfer}")
-        print(f"PUMA Threshold: {threshold}, Confidence Type: {confidence_type}")
-        print(f"------------------------------")
+        import torch.distributed as dist
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            print(f"--- Sampling Configuration ---")
+            print(f"Steps: {steps}, Max New Tokens: {max_new_tokens}, Block Size: {block_size}")
+            print(f"Temperature: {temperature}, Remasking: {remasking}")
+            print(f"CFG Scale: {cfg_scale}, Stochastic Transfer: {stochastic_transfer}")
+            print(f"PUMA Threshold: {threshold}, Confidence Type: {confidence_type}")
+            print(f"------------------------------")
 
         assert 1 <= block_size
         assert 1 <= steps
