@@ -218,7 +218,7 @@ class BaseEvalHarness(LM):
                     for ctx in contexts
                 ]
 
-                # All ranks MUST call the sampler simultaneously for DDP sync
+                # ALL ranks call sample() together. This is a synchronization point.
                 generated_ids = self.sampler.sample(
                     inputs=prompts,
                     config=self.sampler_config,
@@ -245,6 +245,12 @@ class BaseEvalHarness(LM):
                 import traceback
                 traceback.print_exc()
                 raise e
+
+            # --- Forced Per-Batch Sync ---
+            # Prevents "Fast GPUs" from finishing the whole job and timing out 
+            # while waiting at the final barrier for "Slow GPUs".
+            if dist.is_initialized():
+                dist.barrier()
 
         return out
 
