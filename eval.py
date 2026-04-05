@@ -116,18 +116,19 @@ def main():
                     model_args[k.strip()] = v.strip()
 
     evaluation["model_args"] = model_args
-    task_slug, model_slug, checkpoint_name, params_slug, output_path = get_eval_naming(evaluation)
+    task_slug, model_slug, checkpoint_name, params_slug, _ = get_eval_naming(evaluation)
     
     # Configure results storage
-    # Use output_path stripped of extension as a unique directory for this run
-    output_dir = output_path.rsplit(".", 1)[0]
-    os.makedirs(output_dir, exist_ok=True)
-    evaluation["output_path"] = output_dir
+    # lm-eval appends <model_name>/results.json automatically. 
+    # To avoid duplicates, we provide a base path with all context except the model name.
+    # Structure: .evals/<task>/<checkpoint>/<params>/<model>/results.json
+    output_base = os.path.join(".evals", task_slug, checkpoint_name, params_slug)
+    evaluation["output_path"] = output_base
     
     print(f"📦 Task: {task_slug}")
     print(f"📦 Model: {model_slug} ({checkpoint_name})")
     print(f"📦 Params: {params_slug}")
-    print(f"📦 Results Dir: {output_dir}")
+    print(f"📦 Results Base: {output_base}")
 
     # ── Determinism ──────────────────────────────────────────
     seed = evaluation.get("seed", 42)
