@@ -100,12 +100,16 @@ def main():
         "export PYTHONUNBUFFERED=1",
         "export NCCL_DEBUG=INFO", 
         "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
-        "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=43200",   # 12-hour timeout for slow diffusion
-        "export ACCELERATE_TIMEOUT_IN_SECONDS=43200"       # Also set for accelerate specifically
+        "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=43200",
+        "export ACCELERATE_TIMEOUT_IN_SECONDS=43200",
+        "export TORCH_NCCL_TRACE_BUFFER_SIZE=2000000",
+        "export TORCH_CPP_LOG_LEVEL=INFO",
+        "export NCCL_DEBUG=INFO"
     ]
     
     # 3b. Automatic Naming and Directory Construction
     if "seed" not in evaluation: evaluation["seed"] = 42
+    if "distributed_timeout" not in evaluation: evaluation.setdefault("distributed_timeout", 43200)
     
     # Extract model_args and handle CLI overrides
     model_args = evaluation.get("model_args", {})
