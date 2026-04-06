@@ -1,3 +1,30 @@
+import os
+import sys
+from datetime import timedelta
+
+# 1. FORCE initialization before any heavy imports to prevent early-default-init race conditions
+if "RANK" in os.environ:
+    try:
+        import torch.distributed as dist
+        import torch
+        if not dist.is_initialized():
+            # Sniff for the flag in raw sys.argv before official parsing
+            timeout_seconds = 43200 
+            for i, arg in enumerate(sys.argv):
+                if arg == "--distributed_timeout" and i + 1 < len(sys.argv):
+                    try:
+                        timeout_seconds = int(sys.argv[i+1])
+                    except ValueError:
+                        pass
+            
+            dist.init_process_group(
+                backend="nccl" if torch.cuda.is_available() else "gloo", 
+                timeout=timedelta(seconds=timeout_seconds)
+            )
+    except ImportError:
+        pass
+
+# 2. Now proceed with the rest of the imports
 """
 accelerate launch \
     --num_processes 4 \
@@ -9,7 +36,6 @@ accelerate launch \
     --model_args "pretrained=GSAI-ML/LLaDA-8B-Instruct,max_new_tokens=512,steps=512,block_size=512,cfg_scale=0.0"
 """
 
-import sys
 import torch
 from dataclasses import dataclass
 
