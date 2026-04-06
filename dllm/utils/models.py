@@ -289,7 +289,9 @@ def get_tokenizer(
             try:
                 # If we have the ID, try to find the corresponding token string
                 potential_mask = tokenizer.convert_ids_to_tokens(model_cfg.mask_token_id)
-                if potential_mask and potential_mask not in [tokenizer.unk_token, tokenizer.pad_token]:
+                # 🟢 Safety Fix: For LLaDA-Base, the mask_token often overlaps with pad_token.
+                # Do not skip it just because it's a pad token.
+                if potential_mask and potential_mask != tokenizer.unk_token:
                     tokenizer.mask_token = potential_mask
             except:
                 pass
