@@ -157,11 +157,16 @@ class MDLMSampler(BaseSampler):
 
         # ----- Initialize canvas with EOS, copy inputs, and append mask tail -----
         x = torch.full((B, T), eos_id, dtype=torch.long, device=self.model.device)
+        # 🟢 Persistent mask tracking: use a boolean tensor to distinguish masks from EOS
+        # especially when they share the same ID (e.g. in LLaDA-8B-Base).
+        is_mask = torch.zeros((B, T), dtype=torch.bool, device=self.model.device)
+
         for i, p in enumerate(inputs):
             x[i, : prompt_lens[i]] = p  # keep original prompt tokens
-            x[i, prompt_lens[i] : prompt_lens[i] + max_new_tokens] = (
-                mask_id  # append `max_new_tokens` masks to be generated
-            )
+            start, end = prompt_lens[i], prompt_lens[i] + max_new_tokens
+            x[i, start:end] = mask_id  # append `max_new_tokens` masks to be generated
+            is_mask[i, start:end] = True
+
         attention_mask = torch.zeros((B, T), dtype=torch.long, device=self.model.device)
         for i, pl in enumerate(prompt_lens):
             valid_end = min(pl + max_new_tokens, T)
@@ -170,7 +175,7 @@ class MDLMSampler(BaseSampler):
         # Tokens that were *given* at the start (non-mask, non-EOS).
         # These will be masked in the unconditional forward pass for CFG.
         # Tokens from `cfg_keep_tokens` should *not* be treated as "given" for CFG
-        unmasked_index = (x != mask_id) & attention_mask.bool()
+        unmasked_index = (~is_mask) & attention_mask.bool()
         if not (cfg_keep_tokens is None or len(cfg_keep_tokens) == 0):
             keep_mask = torch.isin(
                 x, torch.as_tensor(cfg_keep_tokens, device=self.model.device)
@@ -194,7 +199,7 @@ class MDLMSampler(BaseSampler):
                 if start < end:
                     width = end - start
                     block_mask_index[j, :width] = (
-                        x[j, start:end] == mask_id
+                        is_mask[j, start:end]
                     )  # which positions in this block are still masked
 
             # Decide how many tokens to reveal per step in this block
@@ -232,7 +237,7 @@ class MDLMSampler(BaseSampler):
 
             for i in range(effective_steps):
                 # Update mask_index within this block for this specific step
-                mask_index = (x[:, :T] == mask_id) & attention_mask.bool()
+                mask_index = is_mask & attention_mask.bool()
                 # within current block range
                 block_start = max(0, min(prompt_lens) + b * block_size)
                 # Actually we can just check if any masks are left in the whole sequence 
@@ -354,30 +359,40 @@ class MDLMSampler(BaseSampler):
 
                 # Commit chosen predictions into the canvas
                 x[transfer_index] = x0[transfer_index]
+                is_mask[transfer_index] = False
                 if histories is not None:
                     histories.append(x.clone())
 
                 # Efficiency & EOS respect: If a sequence produces an EOS/EOT, fill trailing masks
                 # for that sequence with EOS and check if the entire batch can stop early.
-                all_done = True
-                for j in range(B):
-                    gen_part = x[j, prompt_lens[j]:]
-                    # Check for termination tokens in the generated part
-                    term_mask = (gen_part == eos_id)
-                    if eot_id is not None:
-                        term_mask |= (gen_part == eot_id)
+                # 🟢 Safety check: only optimize if mask and EOS are distinct.
+                # If they are same, every mask token looks like an EOS, which triggers early exit.
+                if mask_id != eos_id:
+                    all_done = True
+                    for j in range(B):
+                        gen_part = x[j, prompt_lens[j]:]
+                        # Check for termination tokens in the *revealed* part (not masks)
+                        revealed_mask = ~is_mask[j, prompt_lens[j]:]
+                        term_mask = (gen_part == eos_id) & revealed_mask
+                        if eot_id is not None:
+                            term_mask |= (gen_part == eot_id) & revealed_mask
 
-                    term_indices = term_mask.nonzero(as_tuple=True)[0]
-                    if term_indices.numel() > 0:
-                        # Once we see a termination token, everything after it is irrelevant
-                        first_term_idx = prompt_lens[j] + term_indices[0].item()
-                        if first_term_idx + 1 < T:
-                            x[j, first_term_idx + 1:] = eos_id
-                    else:
-                        all_done = False
-
-                if all_done:
-                    break
+                        term_indices = term_mask.nonzero(as_tuple=True)[0]
+                        if term_indices.numel() > 0:
+                            # Once we see a termination token, everything after it is irrelevant
+                            first_term_idx = prompt_lens[j] + term_indices[0].item()
+                            if first_term_idx + 1 < T:
+                                x[j, first_term_idx + 1:] = eos_id
+                                is_mask[j, first_term_idx + 1:] = False
+                        else:
+                            all_done = False
+                    
+                    if all_done:
+                        break
+                else:
+                    # If mask == EOS, we just check if no masks are left in the entire sequence.
+                    if not is_mask.any():
+                        break
 
             if all_done:
                 break
@@ -441,6 +456,10 @@ class MDLMSampler(BaseSampler):
         B = len(inputs)
         seq_lens = [t.shape[0] for t in inputs]
         T = max(seq_lens)
+        # 🟢 Persistent mask tracking for infill
+        is_mask = (torch.stack([
+            F.pad(t, (0, T - t.shape[0]), value=eos_id) for t in inputs
+        ]) == mask_id).to(self.model.device)
 
         # Default to a single block spanning the whole sequence
         if block_size is None:
@@ -461,7 +480,7 @@ class MDLMSampler(BaseSampler):
         # Tokens that were *given* at the start (non-mask, non-EOS).
         # These will be masked in the unconditional forward pass for CFG.
         # Tokens from `cfg_keep_tokens` should *not* be treated as "given" for CFG
-        unmasked_index = (x != mask_id) & attention_mask.bool()
+        unmasked_index = (~is_mask) & attention_mask.bool()
         if not (cfg_keep_tokens is None or len(cfg_keep_tokens) == 0):
             keep_mask = torch.isin(
                 x, torch.as_tensor(cfg_keep_tokens, device=self.model.device)
@@ -487,7 +506,7 @@ class MDLMSampler(BaseSampler):
                 width = max(0, min(seq_lens[j], stop) - start)
                 widths.append(width)
                 if width > 0:
-                    block_mask_index[j, :width] = x[j, start : start + width] == mask_id
+                    block_mask_index[j, :width] = is_mask[j, start : start + width]
 
             # Decide how many tokens to reveal at each step in this block
             num_transfer_tokens = get_num_transfer_tokens(
@@ -513,7 +532,12 @@ class MDLMSampler(BaseSampler):
                     model_to_inspect = model_to_inspect.get_base_model()
                 
                 self._forward_params = inspect.signature(model_to_inspect.forward).parameters
+            use_loopholing = getattr(self.model.config, "use_loopholing", False)
+            can_use_h_t = "h_t" in forward_params
+
             for s in range(effective_steps):
+                # Update mask_index within this block for this specific step
+                mask_index_full = is_mask & attention_mask.bool()
 
                 # Handle h_t carrying for CFG
                 h_t_batch = None
@@ -599,6 +623,7 @@ class MDLMSampler(BaseSampler):
 
                 # Commit selected predictions into the canvas
                 x[transfer_index] = x0[transfer_index]
+                is_mask[transfer_index] = False
                 if histories is not None:
                     histories.append(x.clone())
 
