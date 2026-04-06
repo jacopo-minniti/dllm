@@ -211,3 +211,27 @@ class BaseEvalHarness(LM):
 
     def loglikelihood_rolling(self, requests):
         raise NotImplementedError
+
+    def all_gather(self, tensor: torch.Tensor) -> torch.Tensor:
+        """All-gather a tensor across ranks."""
+        if dist.is_initialized():
+            # Ensure tensor is on the correct device
+            tensor = tensor.to(self.device)
+            # lm-eval expects concatenated results
+            output = [torch.zeros_like(tensor) for _ in range(self.world_size)]
+            dist.all_gather(output, tensor)
+            return torch.cat([t.unsqueeze(0) if t.dim() == 0 else t for t in output])
+        return tensor
+
+    def gather_object(self, obj: Any, dst: int = 0) -> list[Any] | None:
+        """Gather a Python object to all ranks (lm-eval typically only needs it on dst=0)."""
+        if dist.is_initialized():
+            output = [None] * self.world_size
+            dist.all_gather_object(output, obj)
+            return output
+        return [obj]
+
+    def barrier(self) -> None:
+        """Synchronization barrier."""
+        if dist.is_initialized():
+            dist.barrier()
