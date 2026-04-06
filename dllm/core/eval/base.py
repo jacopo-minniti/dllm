@@ -72,27 +72,16 @@ class BaseEvalHarness(LM):
         )
         device = kwargs.get("device", eval_config.device)
 
-        # ── Distributed ──────────────────────────────────────────
-        # Force a re-initialization or ensure very long timeout for diffusion sampling.
-        # This is necessary if another library (like lm-eval) already initialized with defaults.
-        if dist.is_available():
-            if dist.is_initialized():
-                # We try to destroy and re-init to force our timeout. 
-                # This is aggressive but necessary for 10+ minute generations.
-                try:
-                    dist.destroy_process_group()
-                except Exception:
-                    pass
-            
-            if not dist.is_initialized():
-                try:
-                    dist.init_process_group(
-                        backend="nccl" if torch.cuda.is_available() else "gloo",
-                        timeout=timedelta(seconds=43200),
-                        init_method="env://"
-                    )
-                except Exception as e:
-                    print(f"Warning: Could not initialize distributed group with custom timeout: {e}")
+        # Ensure the process group is initialized with a robust 12-hour timeout
+        if dist.is_available() and not dist.is_initialized():
+            try:
+                dist.init_process_group(
+                    backend="nccl" if torch.cuda.is_available() else "gloo",
+                    timeout=timedelta(seconds=43200),
+                    init_method="env://"
+                )
+            except Exception as e:
+                print(f"Warning: Could not initialize distributed group: {e}")
 
         if dist.is_initialized():
             self._rank = dist.get_rank()

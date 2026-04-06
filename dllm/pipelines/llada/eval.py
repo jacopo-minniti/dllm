@@ -95,6 +95,7 @@ if __name__ == "__main__":
             break
     
     seed_everything(eval_seed)
+    
     try:
         cli_evaluate()
     finally:

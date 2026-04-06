@@ -84,12 +84,8 @@ class MDLMEvalHarness(BaseEvalHarness):
             "is_check_greedy", eval_config.is_check_greedy
         )
 
-        # ensure _device is set if not already set by super().__init__
         if not hasattr(self, "_device") or self._device is None:
             self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # We allow mc_num to be any value; if < batch_size, we just use one iteration with smaller batch
-        # self.mc_num = int(kwargs.get("mc_num", eval_config.mc_num))
-        # self.batch_size = int(kwargs.get("batch_size", eval_config.batch_size))
 
     # ── Private helpers (low-level → high-level) ───────────────────────
 
