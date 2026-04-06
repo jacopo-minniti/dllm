@@ -107,11 +107,11 @@ class BaseEvalHarness(LM):
         # ── Device placement ─────────────────────────────────────
         if accelerator.num_processes > 1:
             self.model = accelerator.prepare(self.model)
-            self.device = accelerator.device
+            self._device = accelerator.device
             self.accelerator = accelerator
         else:
             self.model = self.model.to(device)
-            self.device = torch.device(device)
+            self._device = torch.device(device)
             self.accelerator = None
 
         self.batch_size = int(kwargs.get("batch_size", eval_config.batch_size))
