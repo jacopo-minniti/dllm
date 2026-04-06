@@ -84,7 +84,10 @@ class MDLMEvalHarness(BaseEvalHarness):
             "is_check_greedy", eval_config.is_check_greedy
         )
 
-        assert self.mc_num % self.batch_size == 0
+        self.device = getattr(self, "device", torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+        # We allow mc_num to be any value; if < batch_size, we just use one iteration with smaller batch
+        # self.mc_num = int(kwargs.get("mc_num", eval_config.mc_num))
+        # self.batch_size = int(kwargs.get("batch_size", eval_config.batch_size))
 
     # ── Private helpers (low-level → high-level) ───────────────────────
 
@@ -151,11 +154,12 @@ class MDLMEvalHarness(BaseEvalHarness):
     def _get_loglikelihood(self, prefix: torch.Tensor, target: torch.Tensor) -> float:
         """Monte Carlo estimate of log-likelihood via _forward_process + _get_logits."""
         seq = torch.concatenate([prefix, target])[None, :]
-        seq = seq.repeat((self.batch_size, 1)).to(self._device)
-        prompt_index = torch.arange(seq.shape[1], device=self._device) < len(prefix)
+        seq = seq.repeat((self.batch_size, 1)).to(self.device)
+        prompt_index = torch.arange(seq.shape[1], device=self.device) < len(prefix)
 
         loss_acc = []
-        for _ in range(self.mc_num // self.batch_size):
+        num_iterations = max(1, self.mc_num // self.batch_size)
+        for _ in range(num_iterations):
             perturbed_seq, p_mask = self._forward_process(seq, prompt_index)
             mask_indices = perturbed_seq == self.mask_id
             logits = self._get_logits(perturbed_seq, prompt_index)
@@ -179,10 +183,10 @@ class MDLMEvalHarness(BaseEvalHarness):
             return False
 
         seq = torch.full(
-            (1, len(prefix) + len(target)), self.mask_id, device=self._device
+            (1, len(prefix) + len(target)), self.mask_id, device=self.device
         )
-        prompt_index = torch.arange(seq.shape[1], device=self._device) < len(prefix)
-        prefix, target = prefix.to(self._device), target.to(self._device)
+        prompt_index = torch.arange(seq.shape[1], device=self.device) < len(prefix)
+        prefix, target = prefix.to(self.device), target.to(self.device)
         seq[0, : len(prefix)] = prefix
 
         for i in range(len(target)):
@@ -211,9 +215,9 @@ class MDLMEvalHarness(BaseEvalHarness):
                 f"{len(context_enc)} + {len(continuation_enc)}"
             )
 
-            context = torch.tensor(context_enc, device=self._device, dtype=torch.long)
+            context = torch.tensor(context_enc, device=self.device, dtype=torch.long)
             continuation = torch.tensor(
-                continuation_enc, device=self._device, dtype=torch.long
+                continuation_enc, device=self.device, dtype=torch.long
             )
 
             logprob = self._get_loglikelihood(context, continuation)

@@ -6,26 +6,21 @@ Pipeline-agnostic; no MDLM/Dream specifics.
 Run: Not runnable directly; use pipeline eval entrypoints (e.g. dllm.pipelines.llada.eval).
 """
 
-import os
 import dataclasses
-import traceback
-from datetime import timedelta
 from dataclasses import dataclass
+from datetime import timedelta
 
 import accelerate
 from accelerate.utils import InitProcessGroupKwargs
 import torch
+import torch.distributed as dist
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from tqdm import tqdm
 
-from ..samplers import BaseSampler, BaseSamplerConfig
-from ...utils import (
-    get_model,
-    get_tokenizer,
-    sample_trim,
-)
-from ...utils.configs import ModelArguments
+import dllm
+from dllm.core.samplers import BaseSampler, BaseSamplerConfig
+from dllm.utils.configs import ModelArguments
 
 
 @dataclass
@@ -77,8 +72,7 @@ class BaseEvalHarness(LM):
         device = kwargs.get("device", eval_config.device)
 
         # ── Distributed ──────────────────────────────────────────
-        # Inference (especially diffusion) can be extremely slow per batch (~150s/it).
-        # We increase the NCCL timeout to 12 hours (43200s) to prevent "Straggler" timeout errors.
+        # Inference (especially diffusion) can be slow, increase timeout for stability.
         timeout_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=43200))
         accelerator = accelerate.Accelerator(kwargs_handlers=[timeout_kwargs])
         if torch.distributed.is_initialized():
@@ -93,16 +87,16 @@ class BaseEvalHarness(LM):
             kwargs.setdefault("model_name_or_path", kwargs["pretrained"])
         
         # Default to merging LoRA for eval speed unless explicitly disabled
-        if "merge_lora" not in kwargs and (model_args is None or not hasattr(model_args, "merge_lora")):
+        if "merge_lora" not in kwargs:
             kwargs["merge_lora"] = True
             
         self.model_args = self._build_config(ModelArguments, model_args, kwargs)
-        self.model = get_model(
+        self.model = dllm.utils.get_model(
             self.model_args,
             config=eval_config.get_model_config(self.model_args.model_name_or_path),
         )
         self.model.eval()
-        self.tokenizer = get_tokenizer(self.model_args)
+        self.tokenizer = dllm.utils.get_tokenizer(self.model_args)
         if sampler_config is not None:
             self.sampler_config = self._build_config(
                 type(sampler_config), sampler_config, kwargs
@@ -113,39 +107,14 @@ class BaseEvalHarness(LM):
         # ── Device placement ─────────────────────────────────────
         if accelerator.num_processes > 1:
             self.model = accelerator.prepare(self.model)
-            self._device = accelerator.device
+            self.device = accelerator.device
             self.accelerator = accelerator
         else:
             self.model = self.model.to(device)
-            self._device = torch.device(device)
+            self.device = torch.device(device)
             self.accelerator = None
 
-        batch_size = kwargs.get("batch_size", eval_config.batch_size)
-        if batch_size == "auto":
-            print("Warning: batch_size='auto' not yet supported for dLLM custom harness. Falling back to 1.")
-            self.batch_size = 1
-        else:
-            self.batch_size = int(batch_size)
-
-    def all_gather(self, tensor):
-        """All-gather a tensor across ranks using accelerate."""
-        if self.accelerator is not None:
-            return self.accelerator.gather(tensor)
-        return tensor
-
-    def gather_object(self, obj, dst=0):
-        """Gather a Python object to dst rank using dist.all_gather_object."""
-        import torch.distributed as dist
-        if dist.is_initialized():
-            output = [None for _ in range(self.world_size)]
-            dist.all_gather_object(output, obj)
-            return output
-        return [obj]
-
-    def barrier(self):
-        """Synchronization barrier using accelerate."""
-        if self.accelerator is not None:
-            self.accelerator.wait_for_everyone()
+        self.batch_size = int(kwargs.get("batch_size", eval_config.batch_size))
 
     @property
     def rank(self) -> int:
@@ -173,84 +142,67 @@ class BaseEvalHarness(LM):
         )
 
     # ── Unified generate_until scaffolding ────────────────────────────
+
     @torch.no_grad()
     def generate_until(self, requests: list[Instance]) -> list[str]:
-        # lm-eval has already sharded the dataset across ranks.
-        # We just iterate through our local chunk.
+        # To handle uneven shards in distributed mode, we must synchronize the number of batches.
         num_local_requests = len(requests)
-        out: list[str] = [None] * num_local_requests
-        
-        # To handle uneven shards (e.g. 501 items on 4 GPUs), we must sync the max iterations.
-        import torch.distributed as dist
         if dist.is_initialized():
-            max_req_tensor = torch.tensor([num_local_requests], device=self._device)
+            max_req_tensor = torch.tensor([num_local_requests], device=self.device)
             dist.all_reduce(max_req_tensor, op=dist.ReduceOp.MAX)
             max_requests = max_req_tensor.item()
         else:
             max_requests = num_local_requests
 
         num_batches = (max_requests + self.batch_size - 1) // self.batch_size
-        
-        from tqdm import tqdm
-        import sys
+        out: list[str] = [None] * num_local_requests
 
-        for batch_num in tqdm(
-            range(num_batches),
-            desc=f"Generating Rank {self.rank}",
-            file=sys.stdout,
-            disable=(self.rank != 0),
-            mininterval=1.0,
+        for batch_idx in tqdm(
+            range(num_batches), 
+            desc="Generating...",
+            disable=(self.rank != 0)
         ):
-            start_idx = batch_num * self.batch_size
-            end_idx = min(start_idx + self.batch_size, num_local_requests)
+            start = batch_idx * self.batch_size
+            end = min(start + self.batch_size, num_local_requests)
             
-            # If this rank has fewer items than others in the final batch, 
-            # it must still call the sampler with an empty list to stay in sync.
-            if start_idx < num_local_requests:
-                batch_requests = requests[start_idx:end_idx]
-            else:
-                batch_requests = []
-            
-            try:
-                contexts = [inst.args[0] for inst in batch_requests]
+            if start < num_local_requests:
+                batch = requests[start:end]
+                contexts, gen_kwargs_list = zip(*[inst.args for inst in batch])
                 prompts = [
-                    torch.tensor(self.tokenizer(ctx)["input_ids"], device=self._device, dtype=torch.long)
+                    torch.tensor(
+                        self.tokenizer(ctx)["input_ids"],
+                        device=self.device,
+                        dtype=torch.long,
+                    )
                     for ctx in contexts
                 ]
+            else:
+                batch = []
+                prompts = []
 
-                # ALL ranks call sample() together. This is a synchronization point.
-                generated_ids = self.sampler.sample(
-                    inputs=prompts,
-                    config=self.sampler_config,
-                    return_dict=False,
+            # All ranks call sample() together to stay in sync.
+            # MDLMSampler.sample is now robust to prompts=[].
+            generated_ids = self.sampler.sample(
+                inputs=prompts,
+                config=self.sampler_config,
+                return_dict=False,
+            )
+            
+            if batch:
+                generated_answers = dllm.utils.sample_trim(
+                    self.tokenizer,
+                    generated_ids.tolist(),
+                    [p.tolist() for p in prompts],
                 )
 
-                if batch_requests:
-                    _, gen_kwargs_list = zip(*[inst.args for inst in batch_requests])
-                    generated_answers = sample_trim(
-                        self.tokenizer,
-                        generated_ids.tolist(),
-                        [p.tolist() for p in prompts],
-                    )
+                for i, (answer, gen_kwargs) in enumerate(zip(generated_answers, gen_kwargs_list)):
+                    for stop_seq in gen_kwargs["until"]:
+                        if stop_seq in answer:
+                            answer = answer.split(stop_seq)[0]
+                    out[start + i] = answer
 
-                    for j, (answer, gen_kwargs) in enumerate(zip(generated_answers, gen_kwargs_list)):
-                        for stop_seq in gen_kwargs["until"]:
-                            if stop_seq in answer:
-                                answer = answer.split(stop_seq)[0]
-                        
-                        out[start_idx + j] = answer
-
-            except Exception as e:
-                print(f"❌ Error on Rank {self.rank} in batch {batch_num}: {e}")
-                import traceback
-                traceback.print_exc()
-                raise e
-
-            # --- Forced Per-Batch Sync ---
-            # Prevents "Fast GPUs" from finishing the whole job and timing out 
-            # while waiting at the final barrier for "Slow GPUs".
-            if dist.is_initialized():
-                dist.barrier()
+            if self.accelerator is not None:
+                self.accelerator.wait_for_everyone()
 
         return out
 

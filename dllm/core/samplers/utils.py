@@ -59,6 +59,8 @@ def get_num_transfer_tokens(
         nonzero = num_transfer_tokens[i][num_transfer_tokens[i] > 0]
         rows.append(nonzero)
         max_len = max(max_len, nonzero.numel())
+    if not rows:
+        return torch.zeros((0, 0), dtype=torch.int64, device=mask_index.device)
     # Pad each row to max_len
     padded_rows = []
     for r in rows:

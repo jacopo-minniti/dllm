@@ -144,6 +144,14 @@ class MDLMSampler(BaseSampler):
             max_length = max_prompt_len + max_new_tokens
 
         B = len(inputs)
+        if dist.is_initialized() and B == 0:
+            # Still participate in all_reduce even with empty batch to avoid deadlocks
+            # The canvas T must be consistent with other ranks
+            T = max_length
+            return torch.zeros((0, T), dtype=torch.long, device=self.model.device)
+        elif B == 0:
+            return torch.zeros((0, 0), dtype=torch.long, device=self.model.device)
+
         T = max_length
 
         # ----- Initialize canvas with EOS, copy inputs, and append mask tail -----
