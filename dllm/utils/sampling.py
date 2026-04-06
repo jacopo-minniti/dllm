@@ -26,6 +26,8 @@ def sample_trim(tokenizer, seq_ids_list, input_ids_list) -> list[str]:
         if pad_id is not None:
             while full and full[0] == pad_id:
                 full.pop(0)
+            while prompt and prompt[0] == pad_id:
+                prompt.pop(0)
 
         start = len(prompt)
         end = len(full)
@@ -75,8 +77,10 @@ def infill_trim(tokenizer, seq_ids_list, input_ids_list) -> list[str]:
         # Skip left padding tokens (necessary for dream)
         pad_id = getattr(tokenizer, "pad_token_id", None)
         if pad_id is not None:
-            while full.numel() and full[0].item() == pad_id:
+            while full.numel() > 0 and full[0].item() == pad_id:
                 full = full[1:]
+            while prompt.numel() > 0 and prompt[0].item() == pad_id:
+                prompt = prompt[1:]
 
         masked_index = prompt == tokenizer.mask_token_id
         infill = full[masked_index]

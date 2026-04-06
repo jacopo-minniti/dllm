@@ -379,11 +379,15 @@ class MDLMSampler(BaseSampler):
 
                         term_indices = term_mask.nonzero(as_tuple=True)[0]
                         if term_indices.numel() > 0:
-                            # Once we see a termination token, everything after it is irrelevant
+                            # 🟢 Ensure no masks remain before the EOS token before terminating
                             first_term_idx = prompt_lens[j] + term_indices[0].item()
-                            if first_term_idx + 1 < T:
-                                x[j, first_term_idx + 1:] = eos_id
-                                is_mask[j, first_term_idx + 1:] = False
+                            if is_mask[j, prompt_lens[j]:first_term_idx].any():
+                                all_done = False
+                            else:
+                                # Once we see a valid termination token, everything after it is irrelevant
+                                if first_term_idx + 1 < T:
+                                    x[j, first_term_idx + 1:] = eos_id
+                                    is_mask[j, first_term_idx + 1:] = False
                         else:
                             all_done = False
                     
