@@ -5,7 +5,6 @@ reference: https://github.com/ML-GSAI/LLaDA/blob/main/generate.py
 import math
 import inspect
 from dataclasses import dataclass
-from tqdm import tqdm
 import torch.distributed as dist
 
 import numpy as np
@@ -231,16 +230,7 @@ class MDLMSampler(BaseSampler):
             can_use_h_t = "h_t" in forward_params
             use_loopholing = getattr(self.model.config, "use_loopholing", False)
 
-            # Skip tqdm if not on rank 0
-            rank = dist.get_rank() if dist.is_initialized() else 0
-            pbar = tqdm(
-                range(effective_steps),
-                desc=f"Sampling [Block {b+1}/{num_blocks}]",
-                disable=(rank != 0),
-                leave=False,
-            )
-
-            for i in pbar:
+            for i in range(effective_steps):
                 # Update mask_index within this block for this specific step
                 mask_index = (x[:, :T] == mask_id) & attention_mask.bool()
                 # within current block range
