@@ -60,27 +60,6 @@ class LLaDAEvalHarness(MDLMEvalHarness):
 
 
 if __name__ == "__main__":
-    import os
-    import datetime
-    import torch.distributed as dist
-
-    # Set aggressive NCCL and Torch environment variables for long-running jobs
-    os.environ.setdefault("NCCL_ASYNC_ERROR_HANDLING", "1")
-    os.environ.setdefault("TORCH_NCCL_BLOCKING_WAIT", "1")
-    os.environ.setdefault("TORCH_DISTRIBUTED_DEBUG", "INFO") # For better debugging in case of failure
-
-    # Ensure the process group is initialized with a very long timeout (12 hours)
-    # This must happen as early as possible.
-    if not dist.is_initialized():
-        # In a slurm environment MASTER_ADDR and MASTER_PORT are usually set by srun or accelerate
-        try:
-            dist.init_process_group(
-                backend="nccl" if torch.cuda.is_available() else "gloo",
-                timeout=datetime.timedelta(seconds=43200),
-            )
-        except Exception as e:
-            print(f"Warning: Failed to initialize process group: {e}. Falling back to default.")
-
     # Pre-parse seed for process-wide determinism (cudnn, hashseed, etc.)
     eval_seed = 42
     for i, arg in enumerate(sys.argv):
@@ -95,9 +74,9 @@ if __name__ == "__main__":
             break
     
     seed_everything(eval_seed)
+    # The --distributed_timeout flag is now officially supported!
     try:
         cli_evaluate()
     finally:
-        import torch.distributed as dist
-        if dist.is_initialized():
-            dist.destroy_process_group()
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
