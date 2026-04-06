@@ -102,6 +102,7 @@ def main():
         "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
         "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=43200",
         "export ACCELERATE_TIMEOUT_IN_SECONDS=43200",
+        "export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=43200",
         "export TORCH_NCCL_TRACE_BUFFER_SIZE=2000000",
         "export TORCH_CPP_LOG_LEVEL=INFO",
         "export NCCL_DEBUG=INFO"
@@ -109,7 +110,7 @@ def main():
     
     # 3b. Automatic Naming and Directory Construction
     if "seed" not in evaluation: evaluation["seed"] = 42
-    if "distributed_timeout" not in evaluation: evaluation.setdefault("distributed_timeout", 43200)
+    if "distributed_timeout" not in evaluation: evaluation["distributed_timeout"] = 43200
     
     # Extract model_args and handle CLI overrides
     model_args = evaluation.get("model_args", {})
@@ -136,7 +137,22 @@ def main():
     print(f"📦 Params: {params_slug}")
     print(f"📦 Results Base: {output_base}")
 
-    # ── Determinism ──────────────────────────────────────────
+    # ── Caching and Persistence ──────────────────────────────
+    # 1. Model Response Cache: Unique per task/model/params to allow resumption
+    if "use_cache" not in evaluation:
+        cache_dir = os.path.join(output_base, "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        # Prefix for the SQLite shard database (lm-eval appends _rankX.db)
+        evaluation["use_cache"] = os.path.join(cache_dir, "results")
+    
+    # 2. Request Cache: Speed up prompt building across runs
+    if "cache_requests" not in evaluation:
+        evaluation["cache_requests"] = True
+
+    # ── Seed and Distributed Defaults ─────────────────────────
+    if "seed" not in evaluation: evaluation["seed"] = 42
+    if "distributed_timeout" not in evaluation: evaluation.setdefault("distributed_timeout", 43200)
+
     seed = evaluation.get("seed", 42)
     eval_flags = [f"--seed {seed}"]
     
@@ -219,6 +235,7 @@ echo "Launching Evaluation: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_AD
 # ===== Execution =====
 srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" \\
   bash -c "accelerate launch \\
+  --timeout 43200 \\
   --config_file '{acc_config}' \\
   --num_machines '${{NUM_NODES}}' \\
   --num_processes '${{WORLD_SIZE}}' \\
