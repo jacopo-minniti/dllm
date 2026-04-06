@@ -12,7 +12,7 @@ evaluation:
   # Model Configuration
   model: "llada"
   model_args:
-    pretrained: ".models/llada-base-gsm8k-lora/lr2e-05_bs32_lora-r32-a64/checkpoint-300"
+    pretrained: ".models/llada-base-numinamathcot-lora/lr2e-05_bs256_lora-r32-a64/checkpoint-200"
     dtype: "bfloat16"
     
     lora: True

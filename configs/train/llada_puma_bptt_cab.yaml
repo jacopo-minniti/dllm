@@ -10,7 +10,7 @@ training:
   # Method: BPTT + CAB (K-step unrolling)
   loss_type: "puma_bptt"
   puma_threshold: 0.15  
-  bptt_steps: 4
+  bptt_steps: 2
   lora: False
   r: 32
   lora_alpha: 64                   
@@ -24,16 +24,16 @@ training:
   
   
   # Hyperparameters
-  num_train_epochs: 7
+  num_train_epochs: 5
   learning_rate: 2e-05
   per_device_train_batch_size: 2
   gradient_accumulation_steps: 8
   lr_scheduler_type: "linear"
   warmup_ratio: 0.1
-  max_grad_norm: 1.0                # Added to help stabilize BPTT gradients
+  max_grad_norm: 1.5                # Added to help stabilize BPTT gradients
 
   # Dataset & Formatting
-  dataset_args: "openai/gsm8k[train:7473,test:1319]"
+  dataset_args: "AI-MO/NuminaMath-CoT[train:50000,test:1000]"
   use_chat_template: False
   mask_prompt_loss: True
 

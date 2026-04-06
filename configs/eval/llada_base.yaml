@@ -3,7 +3,7 @@ evaluation:
   script_path: "dllm/pipelines/llada/eval.py"
   tasks: "math500_reasoning"
   num_fewshot: 4
-  batch_size: 4
+  batch_size: 8
   seed: 42
   device: "cuda"
   apply_chat_template: False   
@@ -23,7 +23,7 @@ evaluation:
     
     # Sampling Strategy 
     max_new_tokens: 512
-    steps: 256          
+    steps: 64          
     block_size: 32
     temperature: 0.0    
     remasking: "low_confidence"
