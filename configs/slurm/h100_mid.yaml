@@ -9,3 +9,4 @@ output: "./.logs/%x-%j.out"
 error: "./.logs/%x-%j.err"
 requeue: true
 working_dir: "/scratch/jacopo04/dllm"
+account: "def-rudner"
