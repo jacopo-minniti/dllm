@@ -127,10 +127,11 @@ def main():
     task_slug, model_slug, checkpoint_name, params_slug, _ = get_eval_naming(evaluation)
     
     # Configure results storage
-    # lm-eval appends <model_name>/results.json automatically. 
-    # To avoid duplicates, we provide a base path with all context except the model name.
-    # Structure: .evals/<task>/<checkpoint>/<params>/<model>/results.json
-    output_base = os.path.join(".evals", task_slug, checkpoint_name, params_slug)
+    # Since lm-eval appends the `model` arg (e.g. `llada`) to the output path,
+    # we inject `model_slug` into the base path to ensure all models stay isolated
+    # and to guarantee that the SQLite cache database is partitioned per model.
+    # Structure: .evals/<task>/<checkpoint>/<params>/<model_slug>
+    output_base = os.path.join(".evals", task_slug, checkpoint_name, params_slug, model_slug)
     evaluation["output_path"] = output_base
     
     print(f"📦 Task: {task_slug}")

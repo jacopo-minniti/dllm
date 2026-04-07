@@ -142,11 +142,11 @@ def get_eval_naming(evaluation_cfg):
     if nodes and nodes[-1].startswith("checkpoint-"):
         checkpoint_name = nodes.pop()
     
-    # The "model_slug" is strictly group__name
+    # The "model_slug" is strictly name (authorship removed)
     if len(nodes) >= 2:
-        model_slug = f"{nodes[-2]}__{nodes[-1]}"
+        model_slug = nodes[-1]
     elif nodes:
-        model_slug = nodes[0].replace("/", "__")
+        model_slug = nodes[0].replace("/", "__").split("__")[-1]
     else:
         model_slug = "default"
 
