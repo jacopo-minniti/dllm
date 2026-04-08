@@ -179,7 +179,11 @@ class LoopholingBPTTPumaLoss(nn.Module):
                         top2_probs, _ = torch.topk(probs, k=2, dim=-1)
                         conf = top2_probs[..., 0] - top2_probs[..., 1]
                     elif self.confidence_type == "entropy":
-                        conf = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
+                        import math
+                        ent = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
+                        # Normalize entropy over [0, 1] relative to vocab size, keeping confidence semantics (1 = certain)
+                        v_size = logits.shape[-1]
+                        conf = 1.0 - (ent / math.log(v_size)).clamp(min=0.0, max=1.0)
                     else:
                         conf = probs.max(dim=-1)[0]
                     weights = 1.0 + conf
@@ -200,6 +204,8 @@ class LoopholingBPTTPumaLoss(nn.Module):
                     elif self.confidence_type == "prob_diff":
                         top2, _ = torch.topk(probs, k=2, dim=-1)
                         u = 1.0 - (top2[..., 0] - top2[..., 1])
+                    elif self.confidence_type == "entropy":
+                        u = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
                     else:
                         u = 1.0 - probs.max(dim=-1)[0]
                     
