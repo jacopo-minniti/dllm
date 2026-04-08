@@ -141,3 +141,5 @@ dmypy.json
 .generated_eval.sh
 /.evals/
 test.py
+.prev_evals/
+.prev_models/

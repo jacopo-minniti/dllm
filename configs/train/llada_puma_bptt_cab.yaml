@@ -38,7 +38,8 @@ training:
     max_grad_norm: 1.5
   
   dataset:
-    dataset_args: "AI-MO/NuminaMath-CoT[train:50000,test:1000]"
+    # "AI-MO/NuminaMath-CoT[train:50000,test:1000]"
+    dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:5000]"
     use_chat_template: False
     mask_prompt_loss: True
   
@@ -50,4 +51,4 @@ training:
 
   stability:
     max_steps: 100000
-    ignore_data_skip: True
+    ignore_data_skip: False
