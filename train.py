@@ -119,7 +119,8 @@ def main():
         "error": "--error",
         "requeue": "--requeue",
         "working_dir": "--chdir",
-        "account": "--account"
+        "account": "--account",
+        "signal": "--signal"
     }
     for k, v in slurm_cfg.items():
         if k in sbatch_map:
