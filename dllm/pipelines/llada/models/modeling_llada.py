@@ -521,7 +521,8 @@ def alibi_attention_bias(seq_len: int, config: ModelConfig, device: torch.device
 
 class CrossAttentionBridge(nn.Module):
     """
-    A bottleneck Cross-Attention Bridge that retrieves context from past latent states.
+    A bottleneck Cross-Attention Bridge that retrieves context from past latent states
+    using Grouped-Query Attention (GQA).
     """
     def __init__(self, config: ModelConfig):
         super().__init__()
@@ -529,11 +530,16 @@ class CrossAttentionBridge(nn.Module):
         d_model = config.d_model
         d_b = config.cab_bottleneck_dim
         d_ff = config.cab_mlp_expansion_dim
+        
+        self.n_heads = config.cab_n_heads
+        self.n_kv_heads = config.cab_n_kv_heads
+        assert d_b % self.n_heads == 0, f"cab_bottleneck_dim ({d_b}) must be divisible by cab_n_heads ({self.n_heads})"
+        self.head_dim = d_b // self.n_heads
 
-        # Phase B.1: Projections to bottleneck
+        # Phase B.1: Projections to multi-head bottleneck
         self.w_q = nn.Linear(d_model, d_b, bias=config.include_bias, device=config.init_device)
-        self.w_k = nn.Linear(d_model, d_b, bias=config.include_bias, device=config.init_device)
-        self.w_v = nn.Linear(d_model, d_b, bias=config.include_bias, device=config.init_device)
+        self.w_k = nn.Linear(d_model, self.n_kv_heads * self.head_dim, bias=config.include_bias, device=config.init_device)
+        self.w_v = nn.Linear(d_model, self.n_kv_heads * self.head_dim, bias=config.include_bias, device=config.init_device)
 
         # Phase B.3: SwiGLU MLP Processing
         self.norm = RMSLayerNorm(config, size=d_b)
@@ -559,21 +565,29 @@ class CrossAttentionBridge(nn.Module):
         init_weights(self.config, self.w3, d=self.config.cab_bottleneck_dim)
 
     def forward(self, x: torch.Tensor, h_t: torch.Tensor) -> torch.Tensor:
-        # Phase B.1: Projection to bottleneck
+        B, L, _ = x.shape
+        _, S, _ = h_t.shape # S is state length (usually same as L)
+
+        # Phase B.1: Projection to multi-head bottleneck
         # Query from current step embedding, Key/Value from past state
-        q = self.w_q(x)
-        k = self.w_k(h_t)
-        v = self.w_v(h_t)
+        q = self.w_q(x).view(B, L, self.n_heads, self.head_dim).transpose(1, 2)
+        k = self.w_k(h_t).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
+        v = self.w_v(h_t).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
+
+        # GQA: Repeat KV heads if necessary
+        if self.n_heads != self.n_kv_heads:
+            num_groups = self.n_heads // self.n_kv_heads
+            k = k.repeat_interleave(num_groups, dim=1)
+            v = v.repeat_interleave(num_groups, dim=1)
 
         # Phase B.2: Bottleneck Attention
-        # Use SDPA for efficient cross-attention (polls past state)
-        # shape: (B, L, d_b)
+        # Use SDPA for efficient multi-head cross-attention
         a = F.scaled_dot_product_attention(
-            q.unsqueeze(1),
-            k.unsqueeze(1),
-            v.unsqueeze(1),
-            is_causal=False
-        ).squeeze(1)
+            q, k, v, is_causal=False
+        )
+        
+        # Reshape and merge heads: (B, nh, L, hd) -> (B, L, d_b)
+        a = a.transpose(1, 2).contiguous().view(B, L, -1)
 
         # Phase B.3: SwiGLU MLP Processing
         a_norm = self.norm(a)

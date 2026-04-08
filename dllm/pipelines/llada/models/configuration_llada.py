@@ -321,6 +321,17 @@ class ModelConfig():
     Expansion dimension for CAB's SwiGLU MLP.
     """
 
+    cab_n_heads: int = 8
+    """
+    The number of query heads for CAB's cross-attention.
+    """
+
+    cab_n_kv_heads: int = 4
+    """
+    The number of key/value heads for CAB's cross-attention.
+    Set to a value smaller than cab_n_heads for Grouped-Query Attention (GQA).
+    """
+
     vocab_size: int = 50257
     """
     Vocabulary size of the model.
