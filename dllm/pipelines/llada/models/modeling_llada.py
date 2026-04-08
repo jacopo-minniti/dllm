@@ -519,10 +519,32 @@ def alibi_attention_bias(seq_len: int, config: ModelConfig, device: torch.device
     return alibi_bias * (1.0 / (2 ** m.view(1, config.n_heads, 1, 1)))  # type: ignore
 
 
+class ZeroBridgeRMSNorm(nn.Module):
+    """
+    Zero-Bridge Layer (N_0): γ ⊙ RMSNorm(x) + β
+    Used at the very end of the Injector, initializes to nearly zero to preserve the
+    backbone's pretrained behavior at the start of training.
+    """
+    def __init__(self, size: int, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.gamma = nn.Parameter(torch.zeros(size))
+        # Zero-bridge soft bias helps keep gradients flowing
+        self.beta = nn.Parameter(torch.full((size,), 0.001))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        orig_dtype = x.dtype
+        x = x.to(torch.float32)
+        variance = x.pow(2).mean(-1, keepdim=True)
+        x = x * torch.rsqrt(variance + self.eps)
+        x = x.to(orig_dtype)
+        return self.gamma * x + self.beta
+
+
 class CrossAttentionBridge(nn.Module):
     """
-    A bottleneck Cross-Attention Bridge that retrieves context from past latent states
-    using Grouped-Query Attention (GQA).
+    A bottleneck Cross-Attention Bridge (Injector) that retrieves context from past latent states.
+    Matches the exact mathematical flow of the LLaDA/DiT modulation architecture.
     """
     def __init__(self, config: ModelConfig):
         super().__init__()
@@ -536,68 +558,101 @@ class CrossAttentionBridge(nn.Module):
         assert d_b % self.n_heads == 0, f"cab_bottleneck_dim ({d_b}) must be divisible by cab_n_heads ({self.n_heads})"
         self.head_dim = d_b // self.n_heads
 
-        # Phase B.1: Projections to multi-head bottleneck
-        self.w_q = nn.Linear(d_model, d_b, bias=config.include_bias, device=config.init_device)
-        self.w_k = nn.Linear(d_model, self.n_kv_heads * self.head_dim, bias=config.include_bias, device=config.init_device)
-        self.w_v = nn.Linear(d_model, self.n_kv_heads * self.head_dim, bias=config.include_bias, device=config.init_device)
+        # Phase 1: Down-projections strictly to bottleneck space
+        self.w_down = nn.Linear(d_model, d_b, bias=config.include_bias, device=config.init_device)
+        self.w_down_h = nn.Linear(d_model, d_b, bias=config.include_bias, device=config.init_device)
 
-        # Phase B.3: SwiGLU MLP Processing
-        self.norm = RMSLayerNorm(config, size=d_b)
+        # Stabilizing Pre-Norms for bottleneck Attention
+        self.attn_norm_x = RMSLayerNorm(config, size=d_b)
+        self.attn_norm_h = RMSLayerNorm(config, size=d_b)
+
+        # Phase 2: Attention projections (operating entirely inside bottleneck space)
+        self.w_q = nn.Linear(d_b, d_b, bias=config.include_bias, device=config.init_device)
+        self.w_k = nn.Linear(d_b, self.n_kv_heads * self.head_dim, bias=config.include_bias, device=config.init_device)
+        self.w_v = nn.Linear(d_b, self.n_kv_heads * self.head_dim, bias=config.include_bias, device=config.init_device)
+        self.w_out = nn.Linear(d_b, d_b, bias=config.include_bias, device=config.init_device)
+
+        # Phase 3: FFN Refinement in bottleneck
+        self.mlp_norm = RMSLayerNorm(config, size=d_b)
         self.w1 = nn.Linear(d_b, d_ff, bias=config.include_bias, device=config.init_device)
         self.w2 = nn.Linear(d_ff, d_b, bias=config.include_bias, device=config.init_device)
         self.w3 = nn.Linear(d_b, d_ff, bias=config.include_bias, device=config.init_device)
 
-        # Phase B.4: Zero-Bridge Injection
-        self.w_o = nn.Linear(d_b, d_model, bias=config.include_bias, device=config.init_device)
+        # Phase 4: Zero-Bridge & Up-projection
+        rms_eps = config.rms_norm_eps if hasattr(config, "rms_norm_eps") else 1e-5
+        self.zero_norm = ZeroBridgeRMSNorm(size=d_b, eps=rms_eps)
+        self.w_up = nn.Linear(d_b, d_model, bias=config.include_bias, device=config.init_device)
 
     def reset_parameters(self):
-        # Initialize W_O to zero so the bridge starts as an identity/null operation
-        nn.init.zeros_(self.w_o.weight)
-        if self.w_o.bias is not None:
-            nn.init.zeros_(self.w_o.bias)
+        # Reset standard LayerNorms
+        self.attn_norm_x.reset_parameters()
+        self.attn_norm_h.reset_parameters()
+        self.mlp_norm.reset_parameters()
 
-        # Standard initialization for bottleneck layers
-        init_weights(self.config, self.w_q, d=self.config.d_model)
-        init_weights(self.config, self.w_k, d=self.config.d_model)
-        init_weights(self.config, self.w_v, d=self.config.d_model)
-        init_weights(self.config, self.w1, d=self.config.cab_bottleneck_dim)
-        init_weights(self.config, self.w2, d=self.config.cab_mlp_expansion_dim)
-        init_weights(self.config, self.w3, d=self.config.cab_bottleneck_dim)
+        # Enforce Zero-Bridge configuration manually just in case
+        nn.init.zeros_(self.zero_norm.gamma)
+        nn.init.constant_(self.zero_norm.beta, 0.001)
+
+        # 1. Initialize all CAB weights from a truncated normal dist with sigma = 0.02
+        std = 0.02
+        modules = [
+            self.w_down, self.w_down_h,
+            self.w_q, self.w_k, self.w_v, self.w_out,
+            self.w1, self.w2, self.w3,
+            self.w_up
+        ]
+        for m in modules:
+            nn.init.trunc_normal_(m.weight, mean=0.0, std=std, a=-3*std, b=3*std)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor, h_t: torch.Tensor) -> torch.Tensor:
         B, L, _ = x.shape
         _, S, _ = h_t.shape # S is state length (usually same as L)
 
-        # Phase B.1: Projection to multi-head bottleneck
-        # Query from current step embedding, Key/Value from past state
-        q = self.w_q(x).view(B, L, self.n_heads, self.head_dim).transpose(1, 2)
-        k = self.w_k(h_t).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
-        v = self.w_v(h_t).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
+        # Phase 1: Down-projection to bottleneck 
+        # x_t^b = W_down e_t
+        x_b = self.w_down(x)
+        h_b = self.w_down_h(h_t)
 
-        # GQA: Repeat KV heads if necessary
+        # Phase 2: Cross Attention in bottleneck space
+        # Processing pre-norms for stability
+        x_norm = self.attn_norm_x(x_b)
+        h_norm = self.attn_norm_h(h_b)
+
+        q = self.w_q(x_norm).view(B, L, self.n_heads, self.head_dim).transpose(1, 2)
+        k = self.w_k(h_norm).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
+        v = self.w_v(h_norm).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
+
+        # GQA using native PyTorch broadcasting
         if self.n_heads != self.n_kv_heads:
             num_groups = self.n_heads // self.n_kv_heads
-            k = k.repeat_interleave(num_groups, dim=1)
-            v = v.repeat_interleave(num_groups, dim=1)
-
-        # Phase B.2: Bottleneck Attention
-        # Use SDPA for efficient multi-head cross-attention
-        a = F.scaled_dot_product_attention(
-            q, k, v, is_causal=False
-        )
+            q = q.view(B, self.n_kv_heads, num_groups, L, self.head_dim)
+            k = k.unsqueeze(2)
+            v = v.unsqueeze(2)
+            a = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+            a = a.contiguous().view(B, self.n_heads, L, self.head_dim)
+        else:
+            a = F.scaled_dot_product_attention(q, k, v, is_causal=False)
         
-        # Reshape and merge heads: (B, nh, L, hd) -> (B, L, d_b)
         a = a.transpose(1, 2).contiguous().view(B, L, -1)
+        a = self.w_out(a)
+        
+        # x_t^b <- x_t^b + CrossAttn
+        x_b = x_b + a
 
-        # Phase B.3: SwiGLU MLP Processing
-        a_norm = self.norm(a)
-        # SwiGLU: SiLU(x W1) * (x W3)
-        h = F.silu(self.w1(a_norm)) * self.w3(a_norm)
-        # Residual: Z = A + Z_mlp
-        z = a + self.w2(h)
+        # Phase 3: FFN Refinement
+        # x_t^b <- x_t^b + FFN(N(x_t^b))
+        a_norm = self.mlp_norm(x_b)
+        h_mlp = F.silu(self.w1(a_norm)) * self.w3(a_norm)
+        x_b = x_b + self.w2(h_mlp)
 
-        # Phase B.4: Return delta for injection
-        return self.w_o(z)
+        # Phase 4: Zero-Bridge & Up-projection
+        # \delta_t = W_up N_0(x_t^b)
+        delta = self.w_up(self.zero_norm(x_b))
+
+        return delta
+
 
 
 class LLaDABlock(nn.Module):
