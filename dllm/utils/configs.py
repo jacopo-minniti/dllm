@@ -26,6 +26,8 @@ class ModelArguments:
     merge_lora: bool = False
     use_loopholing: bool = False
     use_cab: bool = False
+    use_puma: bool = False
+    use_bptt: bool = False
     cab_bottleneck_dim: int = 128
     cab_mlp_expansion_dim: int = 512
     cab_n_heads: int = 8
