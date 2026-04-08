@@ -1365,8 +1365,8 @@ class LLaDAModel(LLaDAPreTrainedModel):
             # Traditional Loopholing injection
             x = x + self.h_t_ln(h_t)
         elif (self.config.use_loopholing or self.config.use_cab) and h_t is None:
-            # Initialize h_t with noise if not provided to jumpstart gradients while W_O is zero
-            h_t0 = torch.randn_like(x)
+            # Initialize h_t with scaled noise to avoid massive z norms and exploding W_O gradients
+            h_t0 = torch.randn_like(x) * (self.config.d_model ** -0.5)
             if self.config.use_cab:
                 x = x + self.cab(x, h_t0)
             else:
