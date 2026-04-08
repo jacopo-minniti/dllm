@@ -71,8 +71,20 @@ def load_sft_dataset(
         elif _match(dataset_name_or_path, "tatsu-lab/alpaca"):
             ds = load_dataset_alpaca(dataset_name_or_path)
         elif _match(dataset_name_or_path, "allenai/tulu-3-sft-mixture"):
-            ds = load_dataset(dataset_name_or_path)
-            ds = ds["train"].train_test_split(test_size=0.05, seed=42)
+            # Tulu is huge, avoid loading everything if possible
+            # Check if we can derive splits from kvs
+            has_limits = any(k in kvs for k in ["train", "test", "validation"])
+            if has_limits:
+                 # Pass the largest limit to load_dataset to minimize RAM
+                 # Actually, load_dataset with slice is best
+                 train_limit = kvs.get("train")
+                 split_arg = f"train[:{train_limit}]" if train_limit else "train"
+                 ds = load_dataset(dataset_name_or_path, split=split_arg)
+                 # Re-wrap in dict because load_sft expects DatasetDict later
+                 ds = DatasetDict({"train": ds})
+            else:
+                 ds = load_dataset(dataset_name_or_path)
+                 ds = ds["train"].train_test_split(test_size=0.05, seed=42)
         elif _match(dataset_name_or_path, "HuggingFaceTB/smoltalk"):
             name = kvs.pop("name", "all")
             ds = load_dataset(dataset_name_or_path, name=name)
@@ -89,7 +101,13 @@ def load_sft_dataset(
             from dllm.data.gsm8k import load_dataset_gsm8k
             ds = load_dataset_gsm8k(dataset_name_or_path)
         else:
-            ds = load_dataset(dataset_name_or_path)
+            # General fallback: check if we can optimize split loading
+            train_limit = kvs.get("train")
+            if train_limit and not kvs.get("test") and not kvs.get("validation"):
+                 ds = load_dataset(dataset_name_or_path, split=f"train[:{train_limit}]")
+                 ds = DatasetDict({"train": ds})
+            else:
+                 ds = load_dataset(dataset_name_or_path)
 
         # Normalize to DatasetDict and apply per-split limits
         ds = _ensure_datasetdict(ds)

@@ -38,11 +38,16 @@ def get_model(
         "attn_implementation", getattr(model_args, "attn_implementation", None)
     )
 
-    # Device map: skip when ZeRO-3
+    # Device map: skip when ZeRO-3 or FSDP is enabled to allow proper sharding
+    ps = accelerate.PartialState()
+    is_sharded = (
+        transformers.integrations.is_deepspeed_zero3_enabled() or 
+        ps.distributed_type == accelerate.utils.DistributedType.FSDP
+    )
+    
     device_map = (
-        {"": accelerate.PartialState().local_process_index}
-        if not transformers.modeling_utils.is_deepspeed_zero3_enabled()
-        and torch.cuda.is_available()
+        {"": ps.local_process_index}
+        if not is_sharded and torch.cuda.is_available()
         else None
     )
 
@@ -66,7 +71,8 @@ def get_model(
             torch_dtype = torch.float32
 
     params = {
-        "torch_dtype": torch_dtype,
+        "torch_dtype": torch_dtype,  # Keep for backward compat, but AutoModel now prefers 'dtype'
+        "dtype": torch_dtype,
         "device_map": device_map,
         "quantization_config": quant_config,
         "attn_implementation": attn_implementation,
@@ -296,21 +302,17 @@ def get_tokenizer(
     model_type = getattr(model_cfg, "model_type", None)
 
     # ---------------- Model-specific customization ----------------
-    if tokenizer.mask_token is None:
-        # Check if the config specified a mask_token_id we can resolve
-        if hasattr(model_cfg, "mask_token_id") and model_cfg.mask_token_id is not None:
-            try:
-                # If we have the ID, try to find the corresponding token string
-                potential_mask = tokenizer.convert_ids_to_tokens(model_cfg.mask_token_id)
-                # 🟢 Safety Fix: For LLaDA-Base, the mask_token often overlaps with pad_token.
-                # Do not skip it just because it's a pad token.
-                if potential_mask and potential_mask != tokenizer.unk_token:
-                    tokenizer.mask_token = potential_mask
-            except:
-                pass
+    is_llada = (model_type == "llada" or (model_cls and issubclass(model_cls, LLaDAModelLM)))
+    is_llada_moe = (model_type in ["llada_moe", "llada2_moe"] or (model_cls and issubclass(model_cls, (LLaDAMoEModelLM, LLaDA2MoeModelLM))))
+    is_dream = (model_cls and issubclass(model_cls, DreamModel))
+    is_bert_family = (model_cls and issubclass(model_cls, (BertPreTrainedModel, RobertaPreTrainedModel, ModernBertPreTrainedModel)))
+    is_a2d_llama = (model_cls and issubclass(model_cls, A2DLlamaLMHeadModel))
+    is_a2d_qwen = (model_cls and issubclass(model_cls, (A2DQwen2LMHeadModel, A2DQwen3LMHeadModel)))
 
-    if tokenizer.mask_token is None and (model_type == "llada" or (model_cls and issubclass(model_cls, LLaDAModelLM))):
-        tokenizer.add_special_tokens({"mask_token": "<|mdm_mask|>"})
+    if is_llada:
+        if tokenizer.mask_token is None:
+            tokenizer.add_special_tokens({"mask_token": "<|mdm_mask|>"})
+        
         tokenizer.eot_token = "<|eot_id|>"
         # tokenizer.eot_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eot_token) # can not do this for llada base directly
         # TODO: for llada base, add special_tokens = {"<|start_header_id|>": 126346, "<|end_header_id|>": 126347, "<|eot_id|>": 126348}
@@ -328,17 +330,15 @@ def get_tokenizer(
 
 {% endif %}
 """
-    elif tokenizer.mask_token is None and (model_type in ["llada_moe", "llada2_moe"] or (model_cls and issubclass(model_cls, (LLaDAMoEModelLM, LLaDA2MoeModelLM)))):
-        tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
+    elif is_llada_moe:
+        if tokenizer.mask_token is None:
+            tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
         tokenizer.eot_token = "<|role_end|>"
         tokenizer.eot_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eot_token)
-    elif model_cls and issubclass(model_cls, DreamModel):
+    elif is_dream:
         tokenizer.eot_token = "<|im_end|>"
         tokenizer.eot_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eot_token)
-    elif model_cls and issubclass(
-        model_cls,
-        (BertPreTrainedModel, RobertaPreTrainedModel, ModernBertPreTrainedModel),
-    ):
+    elif is_bert_family:
         tokenizer.eot_token = "[/Answer]"
         tokenizer.chat_template = """\
 {% if messages[0]['role'] == 'system' %}
@@ -367,12 +367,14 @@ def get_tokenizer(
 [Answer]
 {% endif %}
 """
-    elif model_cls and issubclass(model_cls, A2DLlamaLMHeadModel):
-        tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
+    elif is_a2d_llama:
+        if tokenizer.mask_token is None:
+            tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
         tokenizer.eot_token = "<|eot_id|>"
         tokenizer.eot_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eot_token)
-    elif model_cls and issubclass(model_cls, (A2DQwen2LMHeadModel, A2DQwen3LMHeadModel)):
-        tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
+    elif is_a2d_qwen:
+        if tokenizer.mask_token is None:
+            tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
         tokenizer.eot_token = "<|im_end|>"
         tokenizer.eot_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eot_token)
         # When enable_thinking is not passed, default to False so the chat template
