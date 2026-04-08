@@ -124,20 +124,18 @@ def main():
                     model_args[k.strip()] = v.strip()
 
     evaluation["model_args"] = model_args
-    task_slug, model_slug, checkpoint_name, params_slug, _ = get_eval_naming(evaluation)
+    task_slug, model_slug, checkpoint_name, params_slug, output_path = get_eval_naming(evaluation)
     
-    # Configure results storage
-    # Since lm-eval appends the `model` arg (e.g. `llada`) to the output path,
-    # we inject `model_slug` into the base path to ensure all models stay isolated
-    # and to guarantee that the SQLite cache database is partitioned per model.
-    # Structure: .evals/<task>/<checkpoint>/<params>/<model_slug>
-    output_base = os.path.join(".evals", task_slug, checkpoint_name, params_slug, model_slug)
+    # ── Results Storage ───────────────────────────────────────
+    # We use the parent directory of the final output file as the base for results
+    # and the cache database.
+    output_base = os.path.dirname(output_path)
     evaluation["output_path"] = output_base
     
-    print(f"📦 Task: {task_slug}")
     print(f"📦 Model: {model_slug} ({checkpoint_name})")
+    print(f"📦 Task: {task_slug}")
     print(f"📦 Params: {params_slug}")
-    print(f"📦 Results Base: {output_base}")
+    print(f"📦 Output: {output_path}")
 
     # ── Caching and Persistence ──────────────────────────────
     # 1. Model Response Cache: Unique per task/model/params to allow resumption

@@ -128,25 +128,26 @@ def get_eval_naming(evaluation_cfg):
         task_slug = str(tasks).replace(",", "_")
     task_slug = task_slug.replace("/", "__")
         
-    # 2. Model and Checkpoint Slug
+    # 2. Model and Checkpoint Slug Identification
     model_args = evaluation_cfg.get("model_args", {})
     pretrained = str(model_args.get("pretrained", "model")).strip("./")
     
-    # Normalize model path to group__name
-    # Strip prefixes like .models, models, etc.
+    # Extract path nodes, removing common storage prefixes
     nodes = [n for n in pretrained.split("/") if n not in [".models", "models"]]
     
     checkpoint_name = "final"
     if nodes and nodes[-1].startswith("checkpoint-"):
         checkpoint_name = nodes.pop()
     
-    # The "model_slug" is strictly name (authorship removed)
+    # Construct model_slug using the remaining path parts (e.g. group/run_name)
     if len(nodes) >= 2:
-        model_slug = nodes[-1]
+        model_slug = os.path.join(*nodes[-2:]) # captures group and run_name
     elif nodes:
-        model_slug = nodes[0].replace("/", "__").split("__")[-1]
+        model_slug = nodes[0]
     else:
-        model_slug = "default"
+        model_slug = "unknown_model"
+    
+    model_slug = model_slug.replace("/", "__") # Flatten for filesystem safety
 
     # 3. Eval Params Slug
     eval_parts = []
@@ -162,7 +163,8 @@ def get_eval_naming(evaluation_cfg):
     if bs > 0: eval_parts.append(f"bs{bs}")
     
     temp = _to_float(model_args.get("temperature", 0.0))
-    eval_parts.append(f"t{temp}")
+    if temp > 0 or "temperature" in model_args: # Include t0.0 if explicitly set
+        eval_parts.append(f"t{temp}")
     
     # Diffusion/PUMA specific
     th = _to_float(model_args.get("threshold", 0.0))
