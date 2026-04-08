@@ -41,4 +41,7 @@ training:
   logging_steps: 10
   save_steps: 100
   eval_steps: 50
+  # Stability & Resilience
+  ignore_data_skip: True            # Fixes CPU RAM OOM on resume
+  max_steps: 100000                 # Prevents NCCL timeouts in distributed PUMA runs
   save_only_model: False

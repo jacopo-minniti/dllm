@@ -39,6 +39,12 @@ class ModelArguments:
         self.model_name_or_path = resolve_with_base_env(
             self.model_name_or_path, "BASE_MODELS_DIR"
         )
+        # Fix: Forcing backbone dropouts to 0 when training CAB only, ensuring consistency with frozen weights.
+        if self.use_cab and not self.lora:
+             # logger.info("CAB mode detected: Forcing backbone dropouts to 0.0 for stability.")
+             self.attention_dropout = 0.0
+             self.residual_dropout = 0.0
+             self.embedding_dropout = 0.0
 
 
 @dataclass
@@ -82,6 +88,10 @@ class TrainingArguments(transformers.TrainingArguments):
     resume_from_checkpoint: str = field(
         default=None,
         metadata={"help": "Path to a previous checkpoint or 'True' to find latest."},
+    )
+    ignore_data_skip: bool = field(
+        default=False, 
+        metadata={"help": "Avoid CPU RAM spikes during resume by not fast-forwarding data."}
     )
 
     def __post_init__(self):
