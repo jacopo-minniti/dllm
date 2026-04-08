@@ -70,13 +70,8 @@ def get_model(
         "device_map": device_map,
         "quantization_config": quant_config,
         "attn_implementation": attn_implementation,
-        "config": config,
         "low_cpu_mem_usage": True,
         "trust_remote_code": True,
-        "use_loopholing": getattr(model_args, "use_loopholing", False),
-        "use_cab": getattr(model_args, "use_cab", False),
-        "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
-        "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
     }
 
     # Ensure local paths are recognized as such by transformers (starting with ./ or absolute)
@@ -142,15 +137,24 @@ def get_model(
         # this ensures local features like loopholing (h_t) are available
         check_config = config or transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
         
-        # Propagate dropout settings to the config
-        for dropout_field in ["attention_dropout", "residual_dropout", "embedding_dropout"]:
-            val = getattr(model_args, dropout_field, None)
-            if val is not None:
-                setattr(check_config, dropout_field, val)
+        # Propagate all custom settings to the config object strictly
+        # This avoids passing them as kwargs to from_pretrained which can cause __init__ errors
+        custom_fields = {
+            "use_loopholing": getattr(model_args, "use_loopholing", False),
+            "use_cab": getattr(model_args, "use_cab", False),
+            "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
+            "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
+            "attention_dropout": getattr(model_args, "attention_dropout", None),
+            "residual_dropout": getattr(model_args, "residual_dropout", None),
+            "embedding_dropout": getattr(model_args, "embedding_dropout", None),
+        }
+        for field_name, value in custom_fields.items():
+            if value is not None:
+                setattr(check_config, field_name, value)
                 
         if getattr(check_config, "model_type", None) == "llada":
              from dllm.pipelines.llada.models.modeling_llada import LLaDAModelLM
-             print_main(f"ℹ️ Forcing local LLaDAModelLM implementation. Dropout: att={getattr(check_config, 'attention_dropout', 'N/A')}, res={getattr(check_config, 'residual_dropout', 'N/A')}")
+             print_main(f"ℹ️ Forcing local LLaDAModelLM. Config: CAB={check_config.use_cab}, Loop={check_config.use_loopholing}")
              model = LLaDAModelLM.from_pretrained(base_model_path, config=check_config, **params)
         else:
              model = transformers.AutoModelForMaskedLM.from_pretrained(
