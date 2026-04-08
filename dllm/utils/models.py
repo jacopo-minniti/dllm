@@ -141,13 +141,20 @@ def get_model(
         # Detect model type to force local implementation if it's LLaDA
         # this ensures local features like loopholing (h_t) are available
         check_config = config or transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
+        
+        # Propagate dropout settings to the config
+        for dropout_field in ["attention_dropout", "residual_dropout", "embedding_dropout"]:
+            val = getattr(model_args, dropout_field, None)
+            if val is not None:
+                setattr(check_config, dropout_field, val)
+                
         if getattr(check_config, "model_type", None) == "llada":
              from dllm.pipelines.llada.models.modeling_llada import LLaDAModelLM
-             print_main("ℹ️ Forcing local LLaDAModelLM implementation for loopholing support.")
-             model = LLaDAModelLM.from_pretrained(base_model_path, **params)
+             print_main(f"ℹ️ Forcing local LLaDAModelLM implementation. Dropout: att={getattr(check_config, 'attention_dropout', 'N/A')}, res={getattr(check_config, 'residual_dropout', 'N/A')}")
+             model = LLaDAModelLM.from_pretrained(base_model_path, config=check_config, **params)
         else:
              model = transformers.AutoModelForMaskedLM.from_pretrained(
-                 base_model_path, **params
+                 base_model_path, config=check_config, **params
              )
     except Exception:
         model = transformers.AutoModel.from_pretrained(base_model_path, **params)
