@@ -105,7 +105,7 @@ def get_experiment_naming(run_cfg, slurm_cfg):
         th = training.get("puma_threshold", 0.15)
         name_parts.append(f"puma-th{th}")
         
-    if "bptt" in interventions:
+    if is_bptt:
         name_parts.append(f"bptt{bptt_steps}")
         
     if use_cab:
