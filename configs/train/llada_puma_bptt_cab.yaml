@@ -1,47 +1,53 @@
 training:
-  # Core Model Config
-  script_path: "examples/llada/sft.py"
-  model_name_or_path: "GSAI-ML/LLaDA-8B-Base"
-  bf16: True
-  gradient_checkpointing: True
-  seed: 42
-  ddp_find_unused_parameters: False
-
-  # Method: BPTT + CAB (K-step unrolling)
-  loss_type: "puma_bptt"
-  puma_threshold: 0.15  
-  bptt_steps: 4
-  lora: False
-  r: 32
-  lora_alpha: 64                   
-  lora_dropout: 0.05               
-  target_modules: "all-linear"     
-
-  # CAB Interventions (Maintains state-bridging architecture)
-  use_cab: True                    
-  cab_bottleneck_dim: 512
-  cab_mlp_expansion_dim: 1024
+  core:
+    script_path: "examples/llada/sft.py"
+    model_name_or_path: "GSAI-ML/LLaDA-8B-Base"
+    bf16: True
+    gradient_checkpointing: True
+    seed: 42
+    ddp_find_unused_parameters: False
+    loss_type: "puma_bptt"
   
+  puma:
+    active: True
+    puma_threshold: 0.15
   
-  # Hyperparameters
-  num_train_epochs: 1
-  learning_rate: 2e-05
-  per_device_train_batch_size: 4
-  gradient_accumulation_steps: 8
-  lr_scheduler_type: "linear"
-  warmup_ratio: 0.1
-  max_grad_norm: 1.5                # Added to help stabilize BPTT gradients
+  bptt:
+    active: True
+    bptt_steps: 4
+  
+  lora:
+    active: False
+    r: 32
+    lora_alpha: 64
+    lora_dropout: 0.05
+    target_modules: "all-linear"
+  
+  cab:
+    active: True
+    cab_bottleneck_dim: 512
+    cab_mlp_expansion_dim: 1024
+  
+  hyperparameters:
+    num_train_epochs: 1
+    learning_rate: 2e-05
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 8
+    lr_scheduler_type: "linear"
+    warmup_ratio: 0.1
+    max_grad_norm: 1.5
+  
+  dataset:
+    dataset_args: "AI-MO/NuminaMath-CoT[train:50000,test:1000]"
+    use_chat_template: False
+    mask_prompt_loss: True
+  
+  logging:
+    logging_steps: 10
+    save_steps: 100
+    eval_steps: 50
+    save_only_model: False
 
-  # Dataset & Formatting
-  dataset_args: "AI-MO/NuminaMath-CoT[train:50000,test:1000]"
-  use_chat_template: False
-  mask_prompt_loss: True
-
-  # Logging & Checkpointing
-  logging_steps: 10
-  save_steps: 100
-  eval_steps: 50
-  # Stability & Resilience
-  ignore_data_skip: True            # Fixes CPU RAM OOM on resume
-  max_steps: 100000                 # Prevents NCCL timeouts in distributed PUMA runs
-  save_only_model: False
+  stability:
+    max_steps: 100000
+    ignore_data_skip: True

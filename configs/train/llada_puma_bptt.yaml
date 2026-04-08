@@ -1,56 +1,51 @@
 training:
-  # ──────────────────────────────────────────────────────────
-  # ── Core Model Config ─────────────────────────────────────
-  # ──────────────────────────────────────────────────────────
-  script_path: "examples/llada/sft.py"
-  model_name_or_path: "GSAI-ML/LLaDA-8B-Base"
-  bf16: True
-  gradient_checkpointing: True
-  seed: 42
-  ddp_find_unused_parameters: False
+  core:
+    script_path: "examples/llada/sft.py"
+    model_name_or_path: "GSAI-ML/LLaDA-8B-Base"
+    bf16: True
+    gradient_checkpointing: True
+    seed: 42
+    ddp_find_unused_parameters: False
+    loss_type: "puma_bptt"
 
-  # ──────────────────────────────────────────────────────────
-  # ── Method: PUMA + BPTT + Loopholing ──────────────────────
-  # ──────────────────────────────────────────────────────────
-  loss_type: "puma_bptt"           # Streaming PUMA with BPTT unrolling
-  puma_threshold: 0.15             # Target budget per unmasking step
-  bptt_steps: 2                    # Backward steps for gradient unrolling
-  use_loopholing: True             # Enable persistent state-carrying
-  confidence_type: "top_prob"
-  weighted_ce: False
-  
-  lora: True
-  r: 32
-  lora_alpha: 64
-  lora_dropout: 0.05
-  target_modules: "all-linear"
+  puma:
+    active: True
+    puma_threshold: 0.15
 
-  # ──────────────────────────────────────────────────────────
-  # ── CAB Intervention (Disabled) ───────────────────────────
-  # ──────────────────────────────────────────────────────────
-  use_cab: False
-  
-  # ──────────────────────────────────────────────────────────
-  # ── Hyperparameters ───────────────────────────────────────
-  # ──────────────────────────────────────────────────────────
-  num_train_epochs: 3
-  learning_rate: 2e-05
-  per_device_train_batch_size: 1   # Lower BS due to BPTT memory overhead
-  gradient_accumulation_steps: 4
-  lr_scheduler_type: "linear"
-  warmup_ratio: 0.1
+  bptt:
+    active: True
+    bptt_steps: 2
 
-  # ──────────────────────────────────────────────────────────
-  # ── Dataset & Formatting ──────────────────────────────────
-  # ──────────────────────────────────────────────────────────
-  dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:10000]"
-  use_chat_template: True
-  mask_prompt_loss: True
+  loophole:
+    active: True
+    confidence_type: "top_prob"
+    weighted_ce: False
 
-  # ──────────────────────────────────────────────────────────
-  # ── Logging & Checkpointing ───────────────────────────────
-  # ──────────────────────────────────────────────────────────
-  logging_steps: 10
-  save_steps: 200
-  eval_steps: 100
-  save_only_model: False
+  lora:
+    active: True
+    r: 32
+    lora_alpha: 64
+    lora_dropout: 0.05
+    target_modules: "all-linear"
+
+  cab:
+    active: False
+
+  hyperparameters:
+    num_train_epochs: 3
+    learning_rate: 2e-05
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 4
+    lr_scheduler_type: "linear"
+    warmup_ratio: 0.1
+
+  dataset:
+    dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:10000]"
+    use_chat_template: True
+    mask_prompt_loss: True
+
+  logging:
+    logging_steps: 10
+    save_steps: 200
+    eval_steps: 100
+    save_only_model: False

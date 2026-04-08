@@ -13,6 +13,24 @@ def _to_int(v, default=0):
     except (ValueError, TypeError):
         return default
 
+def flatten_config_dict(d, exclude_keys=None):
+    if exclude_keys is None:
+        exclude_keys = ["model_args", "gen_kwargs", "wandb_args"]
+    flat = {}
+    for k, v in d.items():
+        if isinstance(v, dict) and k not in exclude_keys:
+            if "active" in v:
+                if k == "lora": flat["lora"] = v["active"]
+                elif k == "cab": flat["use_cab"] = v["active"]
+                elif k in ["puma", "bptt"]: flat[f"use_{k}"] = v["active"]
+                elif k == "loophole": flat["use_loopholing"] = v["active"]
+            for sub_k, sub_v in v.items():
+                if sub_k != "active":
+                    flat[sub_k] = sub_v
+        else:
+            flat[k] = v
+    return flat
+
 def get_experiment_naming(run_cfg, slurm_cfg):
     """
     Unified naming system for training runs.
@@ -21,54 +39,40 @@ def get_experiment_naming(run_cfg, slurm_cfg):
     training = run_cfg.get("training", {})
     
     # 1. Base Model Identification
-    model_path = str(training.get("model_name_or_path", "llada")).lower()
-    if "llada" in model_path:
-        if "instruct" in model_path:
-            base_model = "llada-instruct"
-        elif "base" in model_path:
-            base_model = "llada-base"
-        else:
-            base_model = "llada"
-    else:
-        # Final fallback for local paths or other model types
-        base_model = os.path.basename(model_path.rstrip("/")).replace("-", "").replace("_", "")
+    model_path = str(training.get("model_name_or_path", "llada"))
+    base_model = os.path.basename(model_path.rstrip("/"))
 
     # 1.5 Dataset Identification
     dataset_raw = str(training.get("dataset_args", "unknown"))
-    if "tulu-3" in dataset_raw.lower():
-        dataset_slug = "tulu3"
-    elif "math500" in dataset_raw.lower():
-        dataset_slug = "math500"
-    else:
-        # Fallback: extract last part of path but remove brackets/subsets and symbols
-        dataset_slug = dataset_raw.split("[")[0].split("/")[-1].replace("-", "").replace("_", "").lower()
+    dataset_slug = dataset_raw.split("[")[0].split("/")[-1]
 
     # 2. Extract Active Interventions
-    interventions = []
-    
     use_lora = training.get("lora", False)
-    if use_lora: interventions.append("lora")
-    
+    use_loopholing = training.get("use_loopholing", False)
     use_cab = training.get("use_cab", False)
-    if use_cab: interventions.append("cab")
         
     loss_type = str(training.get("loss_type", "mlm")).lower()
     is_puma = "puma" in loss_type
     is_bptt = "bptt" in loss_type
     bptt_steps = _to_int(training.get("bptt_steps", 1))
-    
-    if is_puma: interventions.append("puma")
-    if is_bptt: interventions.append("bptt")
-    elif bptt_steps > 1: interventions.append("bptt")
-
-    # Group: base_model-dataset-int1-int2 (sorted)
-    group_parts = [base_model, dataset_slug]
-    if interventions:
-        group_parts.extend(sorted(interventions))
-    else:
-        group_parts.append("baseline")
+    if bptt_steps > 1:
+        is_bptt = True
         
-    group = "-".join(group_parts)
+    interventions_ordered = []
+    if use_lora: interventions_ordered.append("lora")
+    if use_loopholing: interventions_ordered.append("loophole")
+    if is_puma: interventions_ordered.append("puma")
+    if is_bptt: interventions_ordered.append("bptt")
+    if use_cab: interventions_ordered.append("cab")
+    
+    if not use_lora:
+        interv_str = "-".join(interventions_ordered) if interventions_ordered else ""
+        training_mode = f"base-{interv_str}" if interv_str else "base"
+    else:
+        training_mode = "-".join(interventions_ordered)
+        if not training_mode: training_mode = "base"
+        
+    group = f"{base_model}/{dataset_slug}/{training_mode}"
 
     # 3. Construct Run Name (Hyperparams)
     name_parts = []
@@ -112,7 +116,7 @@ def get_experiment_naming(run_cfg, slurm_cfg):
     run_name = "_".join(name_parts)
     
     # 4. Final Metadata
-    tags = sorted(list(set(interventions + [base_model, dataset_slug, "dllm"])))
+    tags = sorted(list(set(interventions_ordered + [base_model, dataset_slug, "dllm"])))
     output_dir = f".models/{group}/{run_name}"
     return group, run_name, tags, output_dir
 
@@ -183,8 +187,9 @@ def get_eval_naming(evaluation_cfg):
     params_slug = "_".join(eval_parts) if eval_parts else "default"
     
     # 4. Final Output Path
-    # Structure: .evals/<task>/<group__name>/<checkpoint>/<params_slug>.jsonl
-    base_eval_dir = os.path.join(".evals", task_slug, model_slug, checkpoint_name)
+    # Structure: <checkpoint_dir>/evals/<task>/<params_slug>.jsonl
+    pretrained_raw = str(model_args.get("pretrained", "model"))
+    base_eval_dir = os.path.join(pretrained_raw, "evals", task_slug)
     output_path = os.path.join(base_eval_dir, f"{params_slug}.jsonl")
     
     return task_slug, model_slug, checkpoint_name, params_slug, output_path

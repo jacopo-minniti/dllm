@@ -3,7 +3,7 @@ import yaml
 import subprocess
 import os
 import sys
-from dllm.utils.naming import get_eval_naming
+from dllm.utils.naming import get_eval_naming, flatten_config_dict
 
 def dict_to_arg_str(d, sep=","):
     """Convert dict to 'key=val,key2=val2' format."""
@@ -50,6 +50,8 @@ def main():
             run_cfg = yaml.safe_load(f) or {}
         except yaml.YAMLError:
             run_cfg = {}
+    if "evaluation" in run_cfg:
+        run_cfg["evaluation"] = flatten_config_dict(run_cfg["evaluation"])
     with open(args.slurm_config, 'r') as f:
         try:
             slurm_cfg = yaml.safe_load(f) or {}

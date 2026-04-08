@@ -4,7 +4,7 @@ import subprocess
 import os
 import sys
 import shutil
-from dllm.utils.naming import get_experiment_naming
+from dllm.utils.naming import get_experiment_naming, flatten_config_dict
 
 def resolve_config_path(path: str, base_dir: str) -> str:
     """
@@ -52,6 +52,8 @@ def main():
     # 1. Load YAML Configurations
     with open(args.run_config, 'r') as f:
         run_cfg = yaml.safe_load(f)
+    if "training" in run_cfg:
+        run_cfg["training"] = flatten_config_dict(run_cfg["training"])
     with open(args.slurm_config, 'r') as f:
         slurm_cfg = yaml.safe_load(f)
 
