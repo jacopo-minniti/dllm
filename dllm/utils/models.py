@@ -144,6 +144,8 @@ def get_model(
             "use_cab": getattr(model_args, "use_cab", False),
             "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
             "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
+            "cab_n_heads": getattr(model_args, "cab_n_heads", 8),
+            "cab_n_kv_heads": getattr(model_args, "cab_n_kv_heads", 4),
             "attention_dropout": getattr(model_args, "attention_dropout", None),
             "residual_dropout": getattr(model_args, "residual_dropout", None),
             "embedding_dropout": getattr(model_args, "embedding_dropout", None),

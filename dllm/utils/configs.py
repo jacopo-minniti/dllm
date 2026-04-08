@@ -28,6 +28,8 @@ class ModelArguments:
     use_cab: bool = False
     cab_bottleneck_dim: int = 128
     cab_mlp_expansion_dim: int = 512
+    cab_n_heads: int = 8
+    cab_n_kv_heads: int = 4
     # --- model-level dropout ---
     attention_dropout: float = 0.1
     residual_dropout: float = 0.1
