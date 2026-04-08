@@ -97,13 +97,9 @@ def main():
     if "training" not in run_cfg: run_cfg["training"] = {}
     if "seed" not in run_cfg["training"]: run_cfg["training"]["seed"] = 42
     
-    group, name, tags, output_dir, run_id = get_experiment_naming(run_cfg, slurm_cfg)
+    group, name, tags, output_dir = get_experiment_naming(run_cfg, slurm_cfg)
 
-    # 2a. Override run_id if provided via CLI/config (for manual WandB resumption)
-    if "run_id" in run_cfg.get("training", {}):
-        manual_id = str(run_cfg["training"]["run_id"])
-        print(f"🔧 Overriding WandB Run ID: {run_id} -> {manual_id}")
-        run_id = manual_id
+
     
     # 2b. Slurm mapping
     slurm_directives = ["#!/bin/bash"]
@@ -143,8 +139,6 @@ def main():
     env_exports = [
         f"export WANDB_NAME=\"{name}\"",
         f"export WANDB_RUN_GROUP=\"{group}\"",
-        f"export WANDB_RUN_ID=\"{run_id}\"",
-        f"export WANDB_RESUME=\"allow\"",
         f"export WANDB_TAGS=\"{','.join(tags)}\"",
         f"export WANDB_PROJECT=\"{os.getenv('WANDB_PROJECT', 'BPTT-llada')}\"",
         "export WANDB_INIT_TIMEOUT=300",

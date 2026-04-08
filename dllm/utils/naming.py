@@ -16,7 +16,7 @@ def _to_int(v, default=0):
 def get_experiment_naming(run_cfg, slurm_cfg):
     """
     Unified naming system for training runs.
-    Returns: (group, run_name, tags, output_dir, run_id)
+    Returns: (group, run_name, tags, output_dir)
     """
     training = run_cfg.get("training", {})
     
@@ -114,9 +114,7 @@ def get_experiment_naming(run_cfg, slurm_cfg):
     # 4. Final Metadata
     tags = sorted(list(set(interventions + [base_model, dataset_slug, "dllm"])))
     output_dir = f".models/{group}/{run_name}"
-    run_id = hashlib.md5(f"{group}/{run_name}".encode()).hexdigest()
-
-    return group, run_name, tags, output_dir, run_id
+    return group, run_name, tags, output_dir
 
 def get_eval_naming(evaluation_cfg):
     """

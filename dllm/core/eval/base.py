@@ -158,10 +158,13 @@ class BaseEvalHarness(LM):
         num_batches = (max_requests + self.batch_size - 1) // self.batch_size
         out: list[str] = [None] * num_local_requests
 
+        import sys
         for batch_idx in tqdm(
             range(num_batches), 
-            desc="Generating...",
-            disable=(self.rank != 0)
+            desc="Total Progress",
+            disable=(self.rank != 0),
+            file=sys.stdout,
+            dynamic_ncols=True
         ):
             start = batch_idx * self.batch_size
             end = min(start + self.batch_size, num_local_requests)
