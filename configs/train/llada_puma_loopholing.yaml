@@ -32,12 +32,14 @@ training:
     gradient_accumulation_steps: 4
     lr_scheduler_type: "linear"
     warmup_ratio: 0.1
-    attention_dropout: 0.1
-    residual_dropout: 0.1
-    embedding_dropout: 0.1
+    attention_dropout: 0.05
+    residual_dropout: 0.05
+    embedding_dropout: 0.05
   
   dataset:
-    dataset_args: "AI-MO/NuminaMath-CoT[train:50000,test:5000]"
+    # "AI-MO/NuminaMath-CoT[train:50000,test:1000]"
+    # "allenai/tulu-3-sft-mixture[train:50000,test:5000]"
+    dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:5000]"
     use_chat_template: False
     mask_prompt_loss: True
   

@@ -14,7 +14,7 @@ training:
   
   bptt:
     active: True
-    bptt_steps: 4
+    bptt_steps: 2
   
   lora:
     active: False
@@ -39,6 +39,7 @@ training:
   
   dataset:
     # "AI-MO/NuminaMath-CoT[train:50000,test:1000]"
+    # "allenai/tulu-3-sft-mixture[train:50000,test:5000]"
     dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:5000]"
     use_chat_template: False
     mask_prompt_loss: True
@@ -50,5 +51,4 @@ training:
     save_only_model: False
 
   stability:
-    max_steps: 100000
     ignore_data_skip: False
