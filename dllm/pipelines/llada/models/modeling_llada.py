@@ -1537,6 +1537,9 @@ class LLaDAModel(LLaDAPreTrainedModel):
                 if attn_key_values is not None:
                     assert cache is not None
                     attn_key_values.append(cache)
+
+                if self.config.read_layer != -1 and block_idx == self.config.read_layer:
+                    extracted_h_s = x
         else:
             for group_idx, block_group in enumerate(self.transformer.block_groups):
                 if output_hidden_states:
@@ -1556,6 +1559,13 @@ class LLaDAModel(LLaDAPreTrainedModel):
                 if attn_key_values is not None:
                     assert cache is not None
                     attn_key_values.extend(cache)
+                
+                # Each block_group has self.config.block_group_size layers.
+                # Compute the range of layers in this group.
+                group_start = group_idx * self.config.block_group_size
+                group_end = group_start + self.config.block_group_size - 1
+                if self.config.read_layer != -1 and group_start <= self.config.read_layer <= group_end:
+                    extracted_h_s = x
 
         if last_logits_only:
             # shape: (batch_size, 1, d_model)
@@ -1577,7 +1587,13 @@ class LLaDAModel(LLaDAPreTrainedModel):
         if self.config.scale_logits:
             logits.mul_(1 / math.sqrt(self.config.d_model))
 
-        h_s = x if (self.config.use_loopholing or self.config.use_cab) else None
+        if (self.config.use_loopholing or self.config.use_cab):
+            if self.config.read_layer != -1 and 'extracted_h_s' in locals() and extracted_h_s is not None:
+                h_s = extracted_h_s
+            else:
+                h_s = x
+        else:
+            h_s = None
 
         return LLaDAOutput(
             logits=logits, 

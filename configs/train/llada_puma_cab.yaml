@@ -23,6 +23,7 @@ training:
     active: True
     cab_bottleneck_dim: 512
     cab_mlp_expansion_dim: 1024
+    read_layer: -1
   
   hyperparameters:
     num_train_epochs: 5

@@ -321,6 +321,11 @@ class ModelConfig():
     Expansion dimension for CAB's SwiGLU MLP.
     """
 
+    read_layer: int = -1
+    """
+    Which layer to extract the hidden state for CAB or loopholing. Defaults to the last layer (-1).
+    """
+
     cab_n_heads: int = 8
     """
     The number of query heads for CAB's cross-attention.

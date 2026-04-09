@@ -111,7 +111,11 @@ def get_experiment_naming(run_cfg, slurm_cfg):
     if use_cab:
         b = training.get("cab_bottleneck_dim", 256)
         e = training.get("cab_mlp_expansion_dim", 512)
-        name_parts.append(f"cab-b{b}-e{e}")
+        rl = _to_int(training.get("read_layer", -1))
+        cab_name = f"cab-b{b}-e{e}"
+        if rl != -1:
+            cab_name += f"-rl{rl}"
+        name_parts.append(cab_name)
 
     run_name = "_".join(name_parts)
     
