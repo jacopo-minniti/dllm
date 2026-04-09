@@ -21,6 +21,7 @@ training:
   
   loophole:
     active: True
+    read_layer: -1
   
   cab:
     active: False

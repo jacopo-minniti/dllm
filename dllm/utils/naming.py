@@ -116,6 +116,10 @@ def get_experiment_naming(run_cfg, slurm_cfg):
         if rl != -1:
             cab_name += f"-rl{rl}"
         name_parts.append(cab_name)
+    elif use_loopholing:
+        rl = _to_int(training.get("read_layer", -1))
+        if rl != -1:
+            name_parts.append(f"loop-rl{rl}")
 
     run_name = "_".join(name_parts)
     
