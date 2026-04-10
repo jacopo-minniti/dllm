@@ -36,6 +36,7 @@ def main():
     parser.add_argument("--slurm_config", required=True, help="Name or path of Slurm resource configuration")
     parser.add_argument("--accelerate_config", default="ddp", help="Name of accelerate config (located in configs/accelerate/)")
     parser.add_argument("--job_name", default="dllm", help="Slurm job name")
+    parser.add_argument("--begin", help="Time to start the job (Slurm format, e.g. now+2hours)")
     
     # Collect remaining args to pass directly to the eval script
     args, extra_args = parser.parse_known_args()
@@ -255,7 +256,13 @@ srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" \\
     # Submit job
     os.makedirs(".logs", exist_ok=True)
     print(f"🚀 Submitting evaluation job via configuration: {args.run_config}")
-    result = subprocess.run(["sbatch", temp_script])
+    
+    sbatch_cmd = ["sbatch"]
+    if args.begin:
+        sbatch_cmd.extend(["--begin", args.begin])
+    sbatch_cmd.append(temp_script)
+    
+    result = subprocess.run(sbatch_cmd)
     
     if result.returncode == 0:
         print(f"✅ Job submitted successfully. Script: {temp_script}")
