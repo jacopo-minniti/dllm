@@ -96,13 +96,16 @@ class LoopholingBPTTLoss(nn.Module):
         # T-step unroll
         for t in range(self.num_steps):
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
-            if not masked_mask.any():
-                break
 
             # Forward pass
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
+
+            if not masked_mask.any():
+                dummy_loss = 0.0 * logits.sum()
+                loss_terms.append(dummy_loss)
+                break
             
             loss_t = F.cross_entropy(
                 logits.transpose(1, 2),
@@ -124,12 +127,9 @@ class LoopholingBPTTLoss(nn.Module):
                 
                 h_t = h_s 
                 
-        if not loss_terms:
-            total_loss = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
-            return total_loss, None
-
         # Original BPTT: Sum of step-wise averages
-        return sum(loss_terms), outputs
+        total_loss = sum(loss_terms)
+        return total_loss, outputs
 
 class LoopholingBPTTPumaLoss(nn.Module):
     def __init__(self, mask_token_id: int, threshold: float = 0.15, num_steps: int = 2, confidence_type: str = "top_prob", weighted_ce: bool = False):
@@ -154,14 +154,17 @@ class LoopholingBPTTPumaLoss(nn.Module):
         # In PUMA BPTT, we unroll num_steps on the same buffer
         for t in range(self.num_steps):
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
-            if not masked_mask.any():
-                break
 
             # Forward pass
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
             final_outputs = outputs
+            
+            if not masked_mask.any():
+                dummy_loss = 0.0 * logits.sum()
+                loss_terms.append(dummy_loss)
+                break
             
             loss_t = F.cross_entropy(
                 logits.transpose(1, 2),
@@ -226,10 +229,6 @@ class LoopholingBPTTPumaLoss(nn.Module):
 
                 h_t = h_s 
         
-        if not loss_terms:
-            total_loss = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
-            return total_loss, final_outputs
-
         # Original Puma BPTT: Sum of step-wise averages
         total_loss = sum(loss_terms)
 
