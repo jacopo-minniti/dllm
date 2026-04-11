@@ -666,6 +666,15 @@ class LoopholeModule(nn.Module):
         rms_eps = config.rms_norm_eps if hasattr(config, "rms_norm_eps") else 1e-5
         self.zero_bridge = ZeroBridgeRMSNorm(size=config.d_model, eps=rms_eps)
         self.mlp = None
+        
+        # Multi-layer learned gate
+        self.multi_layer_gate = None
+        if len(config.read_layers) > 1:
+            if len(config.read_layers) > 2:
+                raise ValueError(f"Loopholing only supports up to 2 layers for addition. Found {len(config.read_layers)} layers.")
+            # Initialize to 0.0 (sigmoid(0.0) = 0.5) for equal mixing at start
+            self.multi_layer_gate = nn.Parameter(torch.zeros(1, device=config.init_device))
+
         if config.mlp_module:
             # Small SwiGLU MLP (d_model -> d_model bottleneck -> d_model)
             self.mlp = nn.ModuleDict({
@@ -687,8 +696,17 @@ class LoopholeModule(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, h_t: torch.Tensor) -> torch.Tensor:
+        # h_t can be (B, L, D) or (B, 2, L, D) for stacked multi-layer
+        if self.multi_layer_gate is not None and h_t.ndim == 4:
+            # Applying learned mixing gate: α * h1 + (1-α) * h2
+            alpha = torch.sigmoid(self.multi_layer_gate)
+            # h_t shape is [B, 2, L, D]
+            h = alpha * h_t[:, 0] + (1.0 - alpha) * h_t[:, 1]
+        else:
+            h = h_t
+
         # 1. Stabilize latent state with Zero-Bridge RMSNorm
-        h = self.zero_bridge(h_t)
+        h = self.zero_bridge(h)
         
         # 2. Optional MLP refinement
         if self.mlp is not None:
@@ -1480,11 +1498,20 @@ class LLaDAModel(LLaDAPreTrainedModel):
         elif self.config.use_loopholing and h_t is not None:
             # Loopholing injection (optionally restricted to masked positions)
             if self.config.only_mask_tokens and self.config.mask_token_id is not None and input_ids is not None:
-                mask = (input_ids == self.config.mask_token_id).unsqueeze(-1)
-                # Narrow the focus: only take hidden states at masked positions 
-                # and only inject them back into those same positions.
-                delta = self.loophole(h_t * mask)
-                intervention_ratio = (delta * mask).std().item() / (x * mask).std().clamp_min(1e-6).item()
+                mask = (input_ids == self.config.mask_token_id).unsqueeze(-1) # [B, L, 1]
+                
+                # If h_t is multi-layer stacked [B, 2, L, D], mask needs to broadcast correctly
+                h_t_masked = h_t
+                if h_t.ndim == 4:
+                    h_t_masked = h_t * mask.unsqueeze(1) # [B, 2, L, D] * [B, 1, L, 1]
+                else:
+                    h_t_masked = h_t * mask
+                
+                delta = self.loophole(h_t_masked)
+                
+                # Metrics: use average std across layers for normalization if multi-layer
+                ref_std = x.std()
+                intervention_ratio = (delta * mask).std().item() / ref_std.clamp_min(1e-6).item()
                 gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
                 x = torch.where(mask, x + delta, x)
             else:
@@ -1493,8 +1520,10 @@ class LLaDAModel(LLaDAPreTrainedModel):
                 gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
                 x = x + delta
         elif (self.config.use_loopholing or self.config.use_cab) and h_t is None:
-            # Initialize h_t with scaled noise to avoid massive z norms and exploding W_O gradients
+            # Initialize h_t with scaled noise
             h_t0 = torch.randn_like(x) * (self.config.d_model ** -0.5)
+            # For multi-layer, we might need a noise stack, but for initialization noise,
+            # a single layer or simple noise is fine as the modules will handle it.
             if self.config.use_cab:
                 delta = self.cab(x, h_t0)
                 intervention_ratio = delta.std().item() / x.std().clamp_min(1e-6).item()
@@ -1504,7 +1533,7 @@ class LLaDAModel(LLaDAPreTrainedModel):
                 if self.config.only_mask_tokens and self.config.mask_token_id is not None and input_ids is not None:
                     mask = (input_ids == self.config.mask_token_id).unsqueeze(-1)
                     delta = self.loophole(h_t0 * mask)
-                    intervention_ratio = (delta * mask).std().item() / (x * mask).std().clamp_min(1e-6).item()
+                    intervention_ratio = (delta * mask).std().item() / x.std().clamp_min(1e-6).item()
                     gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
                     x = torch.where(mask, x + delta, x)
                 else:
@@ -1586,98 +1615,91 @@ class LLaDAModel(LLaDAPreTrainedModel):
                 ensure_finite_(attention_bias, check_neg_inf=True, check_pos_inf=False)
 
         attn_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = [] if use_cache else None
-
-        # decoder layers
+        # Collect hidden states for loopholing/CAB
+        collected_h_s = {}
         all_hidden_states = []
+        read_layers_indices = set(self.config.read_layers)
 
         # Apply blocks one-by-one.
         if self.config.block_group_size == 1:
             for block_idx, block in enumerate(self.transformer.blocks):
                 if output_hidden_states:
-                    # add hidden states
                     all_hidden_states.append(x)
 
                 layer_past = None if past_key_values is None else past_key_values[block_idx]
-                if (
-                    (self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.whole_layer)
-                    or (
-                        self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_two
-                        and block_idx % 2 == 0
-                    )
-                    or (
-                        self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_three
-                        and block_idx % 3 == 0
-                    )
-                    or (
-                        self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_four
-                        and block_idx % 4 == 0
-                    )
-                ):
-                    # shape: (batch_size, seq_len, d_model)
+                
+                # Activation Checkpointing Logic
+                should_checkpoint = False
+                if self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.whole_layer:
+                    should_checkpoint = True
+                elif self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_two and block_idx % 2 == 0:
+                    should_checkpoint = True
+                
+                if should_checkpoint:
                     x, cache = self._activation_checkpoint_fn(
                         block, x, attention_bias, layer_past, use_cache
                     )
                 else:
-                    # shape: (batch_size, seq_len, d_model)
                     x, cache = block(x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache)
+                
                 if attn_key_values is not None:
                     assert cache is not None
                     attn_key_values.append(cache)
 
-                if self.config.read_layer != -1 and block_idx == self.config.read_layer:
-                    extracted_h_s = x
+                if block_idx in read_layers_indices:
+                    collected_h_s[block_idx] = x
         else:
             for group_idx, block_group in enumerate(self.transformer.block_groups):
                 if output_hidden_states:
-                    # add hidden states
                     all_hidden_states.append(x)
-
-                layers_past = (
-                    None
-                    if past_key_values is None
-                    else past_key_values[
-                        group_idx * self.config.block_group_size : (group_idx + 1) * self.config.block_group_size
-                    ]
-                )
-                x, cache = block_group(
-                    x, attention_bias=attention_bias, layers_past=layers_past, use_cache=use_cache
-                )
+                
+                layers_past = None if past_key_values is None else past_key_values[group_idx * self.config.block_group_size : (group_idx + 1) * self.config.block_group_size]
+                
+                x, cache = block_group(x, attention_bias=attention_bias, layers_past=layers_past, use_cache=use_cache)
+                
                 if attn_key_values is not None:
                     assert cache is not None
                     attn_key_values.extend(cache)
                 
-                # Each block_group has self.config.block_group_size layers.
-                # Compute the range of layers in this group.
-                group_start = group_idx * self.config.block_group_size
-                group_end = group_start + self.config.block_group_size - 1
-                if self.config.read_layer != -1 and group_start <= self.config.read_layer <= group_end:
-                    extracted_h_s = x
+                for i in range(self.config.block_group_size):
+                    global_idx = group_idx * self.config.block_group_size + i
+                    if global_idx in read_layers_indices:
+                        collected_h_s[global_idx] = x
 
         if last_logits_only:
             # shape: (batch_size, 1, d_model)
             x = x[:, -1, :].unsqueeze(1)
 
         # Apply final layer norm.
-        # shape: (batch_size, seq_len or 1, d_model)
         x = self.transformer.ln_f(x)  # type: ignore
         if output_hidden_states:
-            # add final hidden state post-final-layernorm, following HuggingFace's convention
             all_hidden_states.append(x)
 
         # Get logits.
-        # shape: (batch_size, seq_len or 1, vocab_size)
         if self.config.weight_tying:
             logits = F.linear(x, self.transformer.wte.weight, None)  # type: ignore
         else:
             logits = self.transformer.ff_out(x)  # type: ignore
-        if self.config.scale_logits:
-            logits.mul_(1 / math.sqrt(self.config.d_model))
 
         if (self.config.use_loopholing or self.config.use_cab):
-            if self.config.read_layer != -1 and 'extracted_h_s' in locals() and extracted_h_s is not None:
-                h_s = extracted_h_s
-            else:
+            # Consolidate multiple hidden states if requested
+            h_s_list = [collected_h_s[idx] for idx in self.config.read_layers if idx in collected_h_s]
+            
+            # Add final layer if requested via -1 and not already collected
+            if -1 in read_layers_indices:
+                h_s_list.append(x) # post-norm final state
+
+            if not h_s_list:
                 h_s = x
+            elif len(h_s_list) == 1:
+                h_s = h_s_list[0]
+            else:
+                if self.config.use_cab:
+                    # CAB uses sequence concatenation
+                    h_s = torch.cat(h_s_list, dim=1)
+                else:
+                    # Loopholing uses a stack which the module will gate
+                    h_s = torch.stack(h_s_list, dim=1)
         else:
             h_s = None
 

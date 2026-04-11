@@ -331,10 +331,19 @@ class ModelConfig():
     Expansion dimension for CAB's SwiGLU MLP.
     """
 
-    read_layer: int = -1
+    read_layers: List[int] = field(default_factory=lambda: [-1])
     """
-    Which layer to extract the hidden state for CAB or loopholing. Defaults to the last layer (-1).
+    Which layer(s) to extract the hidden state for CAB or loopholing. Defaults to the last layer ([-1]).
+    If multiple are provided for CAB, they are concatenated. For Loopholing, exactly two are supported with a learned gate.
     """
+
+    @property
+    def read_layer(self) -> int:
+        return self.read_layers[0] if self.read_layers else -1
+
+    @read_layer.setter
+    def read_layer(self, value: int):
+        self.read_layers = [value]
 
     cab_n_heads: int = 8
     """
