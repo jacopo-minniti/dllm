@@ -6,7 +6,7 @@ training:
     gradient_checkpointing: True
     seed: 42
     ddp_find_unused_parameters: False
-    loss_type: "puma"
+    loss_type: "puma_bptt"
   
   puma:
     active: True
@@ -19,9 +19,13 @@ training:
     lora_dropout: 0.0
     target_modules: "all-linear"
   
+  bptt:
+    active: True
+    bptt_steps: 2
+  
   loophole:
     active: True
-    read_layer: -1
+    read_layer: 15
   
   cab:
     active: False
