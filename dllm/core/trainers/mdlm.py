@@ -43,10 +43,11 @@ class MDLMTrainer(transformers.Trainer):
         self,
         args: MDLMConfig,
         scheduler: BaseAlphaScheduler | None = None,
+        processing_class: Any | None = None,
         *pargs,
         **kwargs,
     ):
-        super().__init__(args=args, *pargs, **kwargs)
+        super().__init__(args=args, processing_class=processing_class, *pargs, **kwargs)
 
         if not (0.0 < args.time_epsilon < 1.0):
             raise ValueError("time_epsilon must be in (0, 1)")

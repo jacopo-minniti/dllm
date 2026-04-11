@@ -593,6 +593,17 @@ class CrossAttentionBridge(nn.Module):
         nn.init.zeros_(self.zero_bridge.gamma)
         nn.init.constant_(self.zero_bridge.beta, 0.001)
 
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        # Backward compatibility for renaming zero_norm -> zero_bridge
+        old_keys = [
+            (prefix + "zero_norm.gamma", prefix + "zero_bridge.gamma"),
+            (prefix + "zero_norm.beta", prefix + "zero_bridge.beta"),
+        ]
+        for old_key, new_key in old_keys:
+            if old_key in state_dict:
+                state_dict[new_key] = state_dict.pop(old_key)
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)
+
         # 1. Initialize all CAB weights from a truncated normal dist with sigma = 0.02
         std = 0.02
         modules = [
@@ -682,6 +693,19 @@ class LoopholeModule(nn.Module):
                 "w2": nn.Linear(config.d_model, config.d_model, bias=config.include_bias, device=config.init_device),
                 "w3": nn.Linear(config.d_model, config.d_model, bias=config.include_bias, device=config.init_device),
             })
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        # Backward compatibility for renaming ln -> zero_bridge
+        # ln.weight -> zero_bridge.gamma
+        # ln.bias -> zero_bridge.beta
+        old_keys = [
+            (prefix + "ln.weight", prefix + "zero_bridge.gamma"),
+            (prefix + "ln.bias", prefix + "zero_bridge.beta"),
+        ]
+        for old_key, new_key in old_keys:
+            if old_key in state_dict:
+                state_dict[new_key] = state_dict.pop(old_key)
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)
 
     def reset_parameters(self):
         # Enforce Zero-Bridge configuration manually
@@ -1655,15 +1679,30 @@ class LLaDAModel(LLaDAPreTrainedModel):
                 
                 layers_past = None if past_key_values is None else past_key_values[group_idx * self.config.block_group_size : (group_idx + 1) * self.config.block_group_size]
                 
-                x, cache = block_group(x, attention_bias=attention_bias, layers_past=layers_past, use_cache=use_cache)
+                # Activation Checkpointing for groups
+                should_checkpoint = False
+                if self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.whole_layer:
+                    should_checkpoint = True
+                elif self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_two and group_idx % 2 == 0:
+                    should_checkpoint = True
+
+                if should_checkpoint:
+                    x, cache = self._activation_checkpoint_fn(
+                        block_group, x, attention_bias, layers_past, use_cache
+                    )
+                else:
+                    x, cache = block_group(x, attention_bias=attention_bias, layers_past=layers_past, use_cache=use_cache)
                 
                 if attn_key_values is not None:
                     assert cache is not None
                     attn_key_values.extend(cache)
                 
+                # Check if any layer in this group is in read_layers
                 for i in range(self.config.block_group_size):
                     global_idx = group_idx * self.config.block_group_size + i
                     if global_idx in read_layers_indices:
+                        # For block_group_size > 1, we use the output of the group as the best approximation 
+                        # for intermediate layers if the group doesn't expose them.
                         collected_h_s[global_idx] = x
 
         if last_logits_only:

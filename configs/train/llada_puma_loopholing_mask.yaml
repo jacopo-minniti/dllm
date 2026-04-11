@@ -21,7 +21,7 @@ training:
   
   loophole:
     active: True
-    read_layer: 15
+    read_layer: [15]
     only_mask_tokens: True
     mlp_module: True
   

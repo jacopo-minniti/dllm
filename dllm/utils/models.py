@@ -71,7 +71,6 @@ def get_model(
             torch_dtype = torch.float32
 
     params = {
-        "torch_dtype": torch_dtype,  # Keep for backward compat, but AutoModel now prefers 'dtype'
         "dtype": torch_dtype,
         "device_map": device_map,
         "quantization_config": quant_config,
