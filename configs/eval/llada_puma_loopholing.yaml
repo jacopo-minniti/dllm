@@ -12,7 +12,7 @@ evaluation:
   # Model Configuration
   model: "llada"
   model_args:
-    pretrained: ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-loophole-puma/lr2e-05_bs128_puma-th0.15/checkpoint-final"
+    pretrained: ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-loophole-puma-bptt/lr1e-05_bs128_puma-th0.15_bptt2/checkpoint-400"
     dtype: "bfloat16"
     
     lora: False
@@ -25,8 +25,8 @@ evaluation:
     threshold: 0.15
 
     # Sampling Strategy
-    max_new_tokens: 256
-    steps: 128          
+    max_new_tokens: 512
+    steps: 256          
     block_size: 32
     temperature: 0.0
     remasking: "low_confidence"
