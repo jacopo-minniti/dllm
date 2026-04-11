@@ -1515,10 +1515,17 @@ class LLaDAModel(LLaDAPreTrainedModel):
         
         if self.config.use_cab and h_t is not None:
             # Phase B: The Cross-Attention Bridge Injection
-            delta = self.cab(x, h_t)
-            intervention_ratio = delta.std().item() / x.std().clamp_min(1e-6).item()
-            gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
-            x = x + delta
+            if self.config.only_mask_tokens and self.config.mask_token_id is not None and input_ids is not None:
+                mask = (input_ids == self.config.mask_token_id).unsqueeze(-1)
+                delta = self.cab(x, h_t)
+                intervention_ratio = (delta * mask).std().item() / x.std().clamp_min(1e-6).item()
+                gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
+                x = torch.where(mask, x + delta, x)
+            else:
+                delta = self.cab(x, h_t)
+                intervention_ratio = delta.std().item() / x.std().clamp_min(1e-6).item()
+                gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
+                x = x + delta
         elif self.config.use_loopholing and h_t is not None:
             # Loopholing injection (optionally restricted to masked positions)
             if self.config.only_mask_tokens and self.config.mask_token_id is not None and input_ids is not None:

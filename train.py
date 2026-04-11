@@ -167,6 +167,11 @@ def main():
     for k, v in training.items():
         if isinstance(v, bool):
             if v: train_flags.append(f"--{k}")
+        elif isinstance(v, list):
+            # For list arguments, HfArgumentParser expects: --key val1 val2 ...
+            train_flags.append(f"--{k}")
+            for item in v:
+                train_flags.append(str(item))
         else:
             train_flags.append(f"--{k}")
             train_flags.append(str(v))

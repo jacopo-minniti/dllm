@@ -1,9 +1,9 @@
 evaluation:
   # Evaluation Harness
   script_path: "dllm/pipelines/llada/eval.py"
-  tasks: "math500_reasoning"
+  tasks: "math50_reasoning,math500_reasoning"
   num_fewshot: 4
-  batch_size: 4
+  batch_size: 8
   seed: 42
   device: "cuda"
   apply_chat_template: False
@@ -12,24 +12,24 @@ evaluation:
   # Model Configuration
   model: "llada"
   model_args:
-    pretrained: ".models/llada-base-gsm8k-cab-puma/lr2e-05_bs32_puma-th0.15_cab-b512-e1024/checkpoint-500"
+    pretrained: ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-loophole-puma-bptt/lr2e-05_bs256_puma-th0.15_bptt2_loop-mask-mlp-rl15/checkpoint-final"
     dtype: "bfloat16"
     
     lora: False
     merge_lora: False
     
-    # Interventions (Disabled/Baseline)
-    # Set threshold > 0 and use_loopholing: True to enable PUMA inference
-    use_cab: True
-    cab_bottleneck_dim: 512   
-    cab_mlp_expansion_dim: 1024 
-
+    # Interventions
+    use_cab: False
+    
     use_loopholing: True
+    only_mask_tokens: True
+    mlp_module: True
+    read_layer: 15
     threshold: 0.15
 
     # Sampling Strategy
     max_new_tokens: 512
     steps: 256          
     block_size: 32
-    temperature: 0.0    
+    temperature: 0.0
     remasking: "low_confidence"

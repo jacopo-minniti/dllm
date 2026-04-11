@@ -113,6 +113,8 @@ def get_experiment_naming(run_cfg, slurm_cfg):
         e = training.get("cab_mlp_expansion_dim", 512)
         rl = _to_int(training.get("read_layer", -1))
         cab_name = f"cab-b{b}-e{e}"
+        if training.get("only_mask_tokens", False):
+            cab_name += "-mask"
         if rl != -1:
             cab_name += f"-rl{rl}"
         name_parts.append(cab_name)

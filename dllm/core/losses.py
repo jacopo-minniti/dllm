@@ -106,6 +106,9 @@ class LoopholingBPTTLoss(nn.Module):
             "h_t_norm": [],
         }
 
+        h_t = None
+        loss_terms = []
+        
         # T-step unroll
         for t in range(self.num_steps):
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
@@ -181,6 +184,8 @@ class LoopholingBPTTPumaLoss(nn.Module):
             "h_s_norm": [],
             "h_t_norm": [],
         }
+
+        loss_terms = []
 
         # In PUMA BPTT, we unroll num_steps on the same buffer
         for t in range(self.num_steps):
