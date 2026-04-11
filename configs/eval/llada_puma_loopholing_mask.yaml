@@ -12,7 +12,7 @@ evaluation:
   # Model Configuration
   model: "llada"
   model_args:
-    pretrained: ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-loophole-puma-bptt/lr2e-05_bs256_puma-th0.15_bptt2_loop-mask-mlp-rl15/checkpoint-final"
+    pretrained: ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-loophole-puma-bptt/lr2e-05_bs256_puma-th0.15_bptt2_loop-mask-mlp-rl15/checkpoint-189"
     dtype: "bfloat16"
     
     lora: False

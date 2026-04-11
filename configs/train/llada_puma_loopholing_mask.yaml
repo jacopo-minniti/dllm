@@ -7,17 +7,13 @@ training:
     seed: 42
     ddp_find_unused_parameters: False
     loss_type: "puma_bptt"
+
+  lora: { active: False }
+  cab: { active: False }
   
   puma:
     active: True
     puma_threshold: 0.15
-  
-  lora:
-    active: False
-    r: 64
-    lora_alpha: 128
-    lora_dropout: 0.0
-    target_modules: "all-linear"
   
   bptt:
     active: True
@@ -28,9 +24,6 @@ training:
     read_layer: 15
     only_mask_tokens: True
     mlp_module: True
-  
-  cab:
-    active: False
   
   hyperparameters:
     num_train_epochs: 1

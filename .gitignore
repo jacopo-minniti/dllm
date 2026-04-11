@@ -143,3 +143,4 @@ dmypy.json
 test.py
 .prev_evals/
 .prev_models/
+.agents/

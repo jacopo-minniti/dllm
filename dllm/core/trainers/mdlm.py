@@ -19,7 +19,7 @@ import transformers
 from ..schedulers import BaseAlphaScheduler, LinearAlphaScheduler
 from dllm.utils.configs import TrainingArguments
 from dllm.utils.data import prepend_bos
-from .utils import NLLMetric, PPLMetric, OnEvaluateMetricsCallback, WandbAlertCallback, SlurmCheckpointCallback
+from .utils import NLLMetric, PPLMetric, StatsMetric, OnEvaluateMetricsCallback, WandbAlertCallback, SlurmCheckpointCallback
 from ..losses import MLMLoss, PumaLoss, LoopholingBPTTLoss, LoopholingBPTTPumaLoss
 from dllm.data.streaming_batch import StreamingBatch
 
@@ -60,7 +60,14 @@ class MDLMTrainer(transformers.Trainer):
         self.meter = OnEvaluateMetricsCallback(
             trainer=self,
             splits=("train", "eval"),
-            metrics={"nll": NLLMetric(), "ppl": PPLMetric()},
+            metrics={
+                "nll": NLLMetric(), 
+                "ppl": PPLMetric(),
+                "intervention_ratio": StatsMetric(),
+                "gamma_mean": StatsMetric(),
+                "h_s_norm": StatsMetric(),
+                "h_t_norm": StatsMetric(),
+            },
         )
         self.add_callback(self.meter)
         self.add_callback(WandbAlertCallback())
@@ -235,6 +242,21 @@ class MDLMTrainer(transformers.Trainer):
                 weight=maskable_mask.to(dtype=logits.dtype).detach(),
             )
 
+            # Update additional stats during evaluation
+            if not model.training and hasattr(outputs, "stats"):
+                for k, v in outputs.stats.items():
+                    if v is not None:
+                        self.meter.update_metric(split="eval", name=k, value=v)
+            elif not model.training:
+                # Direct metrics from model output (for 1-step MLM)
+                for k in ["intervention_ratio", "gamma_mean"]:
+                    v = getattr(outputs, k, None)
+                    if v is not None:
+                        self.meter.update_metric(split="eval", name=k, value=v)
+                # h_s norm (h_t is None or Noise in MLM)
+                if hasattr(outputs, "h_s") and outputs.h_s is not None:
+                    self.meter.update_metric(split="eval", name="h_s_norm", value=outputs.h_s.norm(p=2, dim=-1).mean().item())
+
             # We need the non-detached version for the loss
             token_nll_orig = F.cross_entropy(
                 logits.transpose(1, 2),
@@ -298,6 +320,11 @@ class MDLMTrainer(transformers.Trainer):
                         value=m_nll * m_masked.to(m_nll.dtype),
                         weight=m_maskable.to(dtype=m_logits.dtype)
                     )
+                    # Update additional stats during evaluation
+                    if not model.training and hasattr(outputs, "stats"):
+                        for k, v in outputs.stats.items():
+                            if v is not None:
+                                self.meter.update_metric(split="eval", name=k, value=v)
             else:
                 # Standard BPTT (step-wise unroll without persistence)
                 inputs = self._preprocess_inputs(inputs)
@@ -313,6 +340,11 @@ class MDLMTrainer(transformers.Trainer):
                         value=m_nll,
                         weight=m_maskable.to(dtype=m_logits.dtype)
                     )
+                    # Update additional stats during evaluation
+                    if not model.training and hasattr(outputs, "stats"):
+                        for k, v in outputs.stats.items():
+                            if v is not None:
+                                self.meter.update_metric(split="eval", name=k, value=v)
 
             # Note: Meters update for new losses might need specialized logic if needed,
             # but for now we follow the general trainer flow.

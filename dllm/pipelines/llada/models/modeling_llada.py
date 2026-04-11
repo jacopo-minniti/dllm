@@ -580,7 +580,7 @@ class CrossAttentionBridge(nn.Module):
 
         # Phase 4: Zero-Bridge & Up-projection
         rms_eps = config.rms_norm_eps if hasattr(config, "rms_norm_eps") else 1e-5
-        self.zero_norm = ZeroBridgeRMSNorm(size=d_b, eps=rms_eps)
+        self.zero_bridge = ZeroBridgeRMSNorm(size=d_b, eps=rms_eps)
         self.w_up = nn.Linear(d_b, d_model, bias=config.include_bias, device=config.init_device)
 
     def reset_parameters(self):
@@ -590,8 +590,8 @@ class CrossAttentionBridge(nn.Module):
         self.mlp_norm.reset_parameters()
 
         # Enforce Zero-Bridge configuration manually just in case
-        nn.init.zeros_(self.zero_norm.gamma)
-        nn.init.constant_(self.zero_norm.beta, 0.001)
+        nn.init.zeros_(self.zero_bridge.gamma)
+        nn.init.constant_(self.zero_bridge.beta, 0.001)
 
         # 1. Initialize all CAB weights from a truncated normal dist with sigma = 0.02
         std = 0.02
@@ -649,7 +649,7 @@ class CrossAttentionBridge(nn.Module):
 
         # Phase 4: Zero-Bridge & Up-projection
         # \delta_t = W_up N_0(x_t^b)
-        delta = self.w_up(self.zero_norm(x_b))
+        delta = self.w_up(self.zero_bridge(x_b))
 
         return delta
 
@@ -663,7 +663,8 @@ class LoopholeModule(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
-        self.ln = LayerNorm.build(config)
+        rms_eps = config.rms_norm_eps if hasattr(config, "rms_norm_eps") else 1e-5
+        self.zero_bridge = ZeroBridgeRMSNorm(size=config.d_model, eps=rms_eps)
         self.mlp = None
         if config.mlp_module:
             # Small SwiGLU MLP (d_model -> d_model bottleneck -> d_model)
@@ -674,7 +675,10 @@ class LoopholeModule(nn.Module):
             })
 
     def reset_parameters(self):
-        self.ln.reset_parameters()
+        # Enforce Zero-Bridge configuration manually
+        nn.init.zeros_(self.zero_bridge.gamma)
+        nn.init.constant_(self.zero_bridge.beta, 0.001)
+        
         if self.mlp is not None:
             for m in self.mlp.values():
                 # Standard truncated normal initialization
@@ -683,8 +687,8 @@ class LoopholeModule(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, h_t: torch.Tensor) -> torch.Tensor:
-        # 1. Stabilize latent state with LayerNorm
-        h = self.ln(h_t)
+        # 1. Stabilize latent state with Zero-Bridge RMSNorm
+        h = self.zero_bridge(h_t)
         
         # 2. Optional MLP refinement
         if self.mlp is not None:
@@ -1133,6 +1137,16 @@ class LLaDAOutput(NamedTuple):
     Latent state for loopholing.
     """
 
+    intervention_ratio: Optional[float] = None
+    """
+    Ratio of loophole output std to embedding std.
+    """
+
+    gamma_mean: Optional[float] = None
+    """
+    Mean absolute value of the Zero-Bridge gamma parameter.
+    """
+
 
 class LLaDAGenerateOutput(NamedTuple):
     token_ids: torch.LongTensor
@@ -1453,29 +1467,51 @@ class LLaDAModel(LLaDAPreTrainedModel):
         else:
             raise ValueError("Either `input_ids` or `input_embeddings` must be provided")
 
+        # Metrics to track
+        intervention_ratio = None
+        gamma_mean = None
+        
         if self.config.use_cab and h_t is not None:
             # Phase B: The Cross-Attention Bridge Injection
-            x = x + self.cab(x, h_t)
+            delta = self.cab(x, h_t)
+            intervention_ratio = delta.std().item() / x.std().clamp_min(1e-6).item()
+            gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
+            x = x + delta
         elif self.config.use_loopholing and h_t is not None:
             # Loopholing injection (optionally restricted to masked positions)
             if self.config.only_mask_tokens and self.config.mask_token_id is not None and input_ids is not None:
                 mask = (input_ids == self.config.mask_token_id).unsqueeze(-1)
                 # Narrow the focus: only take hidden states at masked positions 
                 # and only inject them back into those same positions.
-                x = torch.where(mask, x + self.loophole(h_t * mask), x)
+                delta = self.loophole(h_t * mask)
+                intervention_ratio = (delta * mask).std().item() / (x * mask).std().clamp_min(1e-6).item()
+                gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                x = torch.where(mask, x + delta, x)
             else:
-                x = x + self.loophole(h_t)
+                delta = self.loophole(h_t)
+                intervention_ratio = delta.std().item() / x.std().clamp_min(1e-6).item()
+                gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                x = x + delta
         elif (self.config.use_loopholing or self.config.use_cab) and h_t is None:
             # Initialize h_t with scaled noise to avoid massive z norms and exploding W_O gradients
             h_t0 = torch.randn_like(x) * (self.config.d_model ** -0.5)
             if self.config.use_cab:
-                x = x + self.cab(x, h_t0)
+                delta = self.cab(x, h_t0)
+                intervention_ratio = delta.std().item() / x.std().clamp_min(1e-6).item()
+                gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
+                x = x + delta
             else:
                 if self.config.only_mask_tokens and self.config.mask_token_id is not None and input_ids is not None:
                     mask = (input_ids == self.config.mask_token_id).unsqueeze(-1)
-                    x = torch.where(mask, x + self.loophole(h_t0 * mask), x)
+                    delta = self.loophole(h_t0 * mask)
+                    intervention_ratio = (delta * mask).std().item() / (x * mask).std().clamp_min(1e-6).item()
+                    gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                    x = torch.where(mask, x + delta, x)
                 else:
-                    x = x + self.loophole(h_t0)
+                    delta = self.loophole(h_t0)
+                    intervention_ratio = delta.std().item() / x.std().clamp_min(1e-6).item()
+                    gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                    x = x + delta
 
         if past_key_values:
             assert len(past_key_values) == self.config.n_layers
@@ -1649,7 +1685,9 @@ class LLaDAModel(LLaDAPreTrainedModel):
             logits=logits, 
             attn_key_values=attn_key_values, 
             hidden_states=tuple(all_hidden_states) if output_hidden_states else None,
-            h_s=h_s
+            h_s=h_s,
+            intervention_ratio=intervention_ratio,
+            gamma_mean=gamma_mean
         )  # type: ignore[arg-type]
 
 
@@ -1740,6 +1778,10 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
         )
         if hasattr(outputs, "h_s"):
             res.h_s = outputs.h_s
+        if hasattr(outputs, "intervention_ratio"):
+            res.intervention_ratio = outputs.intervention_ratio
+        if hasattr(outputs, "gamma_mean"):
+            res.gamma_mean = outputs.gamma_mean
         return res
 
     def can_generate(self) -> bool:

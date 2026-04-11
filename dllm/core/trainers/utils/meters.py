@@ -56,6 +56,11 @@ class BaseMetricsCallback(transformers.TrainerCallback):
         self._m[split].update(*args, **kwargs)
 
     @torch.no_grad()
+    def update_metric(self, split: str, name: str, *args, **kwargs) -> None:
+        if name in self._m[split]:
+            self._m[split][name].update(*args, **kwargs)
+
+    @torch.no_grad()
     def finalize(self, split: str) -> dict[str, float]:
         """Compute metrics and reset. Must be called on all ranks so sync aggregates over all ranks."""
         mc = self._m[split]

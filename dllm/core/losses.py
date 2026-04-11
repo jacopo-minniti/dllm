@@ -51,6 +51,14 @@ class PumaLoss(nn.Module):
         logits = outputs.logits
         h_s = getattr(outputs, "h_s", None)
         
+        # Attach stats for logging
+        outputs.stats = {
+            "intervention_ratio": getattr(outputs, "intervention_ratio", None),
+            "gamma_mean": getattr(outputs, "gamma_mean", None),
+            "h_s_norm": h_s.norm(p=2, dim=-1).mean().item() if h_s is not None else None,
+            "h_t_norm": h_t.norm(p=2, dim=-1).mean().item() if h_t is not None else None,
+        }
+        
         # Loss calculation (on selected slots)
         maskable_mask = labels != -100
         masked_mask = (input_ids == self.mask_token_id) & maskable_mask
@@ -90,9 +98,14 @@ class LoopholingBPTTLoss(nn.Module):
         # Always mask target positions in non-streaming BPTT to ensure a valid signal
         input_ids[maskable_mask] = self.mask_token_id
 
-        h_t = None
-        loss_terms = []
-        
+        # Collect stats
+        stats = {
+            "intervention_ratio": [],
+            "gamma_mean": [],
+            "h_s_norm": [],
+            "h_t_norm": [],
+        }
+
         # T-step unroll
         for t in range(self.num_steps):
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
@@ -101,6 +114,16 @@ class LoopholingBPTTLoss(nn.Module):
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
+            
+            # Capture stats
+            if getattr(outputs, "intervention_ratio", None) is not None:
+                stats["intervention_ratio"].append(outputs.intervention_ratio)
+            if getattr(outputs, "gamma_mean", None) is not None:
+                stats["gamma_mean"].append(outputs.gamma_mean)
+            if h_s is not None:
+                stats["h_s_norm"].append(h_s.norm(p=2, dim=-1).mean().item())
+            if h_t is not None:
+                stats["h_t_norm"].append(h_t.norm(p=2, dim=-1).mean().item())
 
             if not masked_mask.any():
                 dummy_loss = 0.0 * logits.sum()
@@ -129,6 +152,9 @@ class LoopholingBPTTLoss(nn.Module):
                 
         # Original BPTT: Sum of step-wise averages
         total_loss = sum(loss_terms)
+        
+        # Attach averaged stats to final outputs
+        outputs.stats = {k: (sum(v)/len(v) if v else None) for k, v in stats.items()}
         return total_loss, outputs
 
 class LoopholingBPTTPumaLoss(nn.Module):
@@ -148,9 +174,14 @@ class LoopholingBPTTPumaLoss(nn.Module):
         h_t = batch.get("h_t")
         
         maskable_mask = labels != -100
-        loss_terms = []
-        final_outputs = None
-        
+        # Collect stats
+        stats = {
+            "intervention_ratio": [],
+            "gamma_mean": [],
+            "h_s_norm": [],
+            "h_t_norm": [],
+        }
+
         # In PUMA BPTT, we unroll num_steps on the same buffer
         for t in range(self.num_steps):
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
@@ -161,6 +192,16 @@ class LoopholingBPTTPumaLoss(nn.Module):
             h_s = getattr(outputs, "h_s", None)
             final_outputs = outputs
             
+            # Capture stats
+            if getattr(outputs, "intervention_ratio", None) is not None:
+                stats["intervention_ratio"].append(outputs.intervention_ratio)
+            if getattr(outputs, "gamma_mean", None) is not None:
+                stats["gamma_mean"].append(outputs.gamma_mean)
+            if h_s is not None:
+                stats["h_s_norm"].append(h_s.norm(p=2, dim=-1).mean().item())
+            if h_t is not None:
+                stats["h_t_norm"].append(h_t.norm(p=2, dim=-1).mean().item())
+
             if not masked_mask.any():
                 dummy_loss = 0.0 * logits.sum()
                 loss_terms.append(dummy_loss)
@@ -231,6 +272,9 @@ class LoopholingBPTTPumaLoss(nn.Module):
         
         # Original Puma BPTT: Sum of step-wise averages
         total_loss = sum(loss_terms)
+        
+        # Attach averaged stats to final outputs
+        final_outputs.stats = {k: (sum(v)/len(v) if v else None) for k, v in stats.items()}
 
         # Update the persistent buffer with the final state from the loop
         with torch.no_grad():
