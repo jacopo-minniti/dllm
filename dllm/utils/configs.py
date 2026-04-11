@@ -25,6 +25,8 @@ class ModelArguments:
     eval_checkpoint: str = None
     merge_lora: bool = False
     use_loopholing: bool = False
+    only_mask_tokens: bool = False
+    mlp_module: bool = False
     use_cab: bool = False
     use_puma: bool = False
     use_bptt: bool = False

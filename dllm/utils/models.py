@@ -147,6 +147,8 @@ def get_model(
         # This avoids passing them as kwargs to from_pretrained which can cause __init__ errors
         custom_fields = {
             "use_loopholing": getattr(model_args, "use_loopholing", False),
+            "only_mask_tokens": getattr(model_args, "only_mask_tokens", False),
+            "mlp_module": getattr(model_args, "mlp_module", False),
             "use_cab": getattr(model_args, "use_cab", False),
             "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
             "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),

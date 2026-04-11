@@ -306,6 +306,16 @@ class ModelConfig():
     Whether to use loopholing (latent state injection across steps).
     """
 
+    only_mask_tokens: bool = False
+    """
+    Whether to only use and modulate hidden states at masked token positions for loopholing.
+    """
+
+    mlp_module: bool = False
+    """
+    Whether to add a small SwiGLU MLP to the loophole module.
+    """
+
     use_cab: bool = False
     """
     Whether to use Cross-Attention Bridge (CAB) to bridge past state.

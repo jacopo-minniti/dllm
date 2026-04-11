@@ -655,6 +655,46 @@ class CrossAttentionBridge(nn.Module):
 
 
 
+class LoopholeModule(nn.Module):
+    """
+    A persistent state injection module for loopholing across steps.
+    Optionally augmented with a small SwiGLU MLP.
+    """
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.config = config
+        self.ln = LayerNorm.build(config)
+        self.mlp = None
+        if config.mlp_module:
+            # Small SwiGLU MLP (d_model -> d_model bottleneck -> d_model)
+            self.mlp = nn.ModuleDict({
+                "w1": nn.Linear(config.d_model, config.d_model, bias=config.include_bias, device=config.init_device),
+                "w2": nn.Linear(config.d_model, config.d_model, bias=config.include_bias, device=config.init_device),
+                "w3": nn.Linear(config.d_model, config.d_model, bias=config.include_bias, device=config.init_device),
+            })
+
+    def reset_parameters(self):
+        self.ln.reset_parameters()
+        if self.mlp is not None:
+            for m in self.mlp.values():
+                # Standard truncated normal initialization
+                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, h_t: torch.Tensor) -> torch.Tensor:
+        # 1. Stabilize latent state with LayerNorm
+        h = self.ln(h_t)
+        
+        # 2. Optional MLP refinement
+        if self.mlp is not None:
+            # SwiGLU: x_out = W2(silu(W3(x)) * W1(x))
+            # d_model -> d_model (chunked) -> d_model
+            h = self.mlp["w2"](F.silu(self.mlp["w3"](h)) * self.mlp["w1"](h))
+            
+        return h
+
+
 class LLaDABlock(nn.Module):
     """
     A base class for transformer block implementations.
@@ -1297,7 +1337,7 @@ class LLaDAModel(LLaDAPreTrainedModel):
                 }
             )
 
-        self.h_t_ln = LayerNorm.build(config) if config.use_loopholing else None
+        self.loophole = LoopholeModule(config) if config.use_loopholing else None
         self.cab = CrossAttentionBridge(config) if config.use_cab else None
 
         # When `init_device="meta"` FSDP will call `reset_parameters()` to initialize weights.
@@ -1348,8 +1388,8 @@ class LLaDAModel(LLaDAPreTrainedModel):
         # Top-level layer norm.
         self.transformer.ln_f.reset_parameters()  # type: ignore
 
-        if self.h_t_ln is not None:
-            self.h_t_ln.reset_parameters()
+        if self.loophole is not None:
+            self.loophole.reset_parameters()
         
         if self.cab is not None:
             self.cab.reset_parameters()
@@ -1417,15 +1457,25 @@ class LLaDAModel(LLaDAPreTrainedModel):
             # Phase B: The Cross-Attention Bridge Injection
             x = x + self.cab(x, h_t)
         elif self.config.use_loopholing and h_t is not None:
-            # Traditional Loopholing injection
-            x = x + self.h_t_ln(h_t)
+            # Loopholing injection (optionally restricted to masked positions)
+            if self.config.only_mask_tokens and self.config.mask_token_id is not None and input_ids is not None:
+                mask = (input_ids == self.config.mask_token_id).unsqueeze(-1)
+                # Narrow the focus: only take hidden states at masked positions 
+                # and only inject them back into those same positions.
+                x = torch.where(mask, x + self.loophole(h_t * mask), x)
+            else:
+                x = x + self.loophole(h_t)
         elif (self.config.use_loopholing or self.config.use_cab) and h_t is None:
             # Initialize h_t with scaled noise to avoid massive z norms and exploding W_O gradients
             h_t0 = torch.randn_like(x) * (self.config.d_model ** -0.5)
             if self.config.use_cab:
                 x = x + self.cab(x, h_t0)
             else:
-                x = x + self.h_t_ln(h_t0)
+                if self.config.only_mask_tokens and self.config.mask_token_id is not None and input_ids is not None:
+                    mask = (input_ids == self.config.mask_token_id).unsqueeze(-1)
+                    x = torch.where(mask, x + self.loophole(h_t0 * mask), x)
+                else:
+                    x = x + self.loophole(h_t0)
 
         if past_key_values:
             assert len(past_key_values) == self.config.n_layers

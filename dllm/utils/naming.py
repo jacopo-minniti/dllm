@@ -117,9 +117,15 @@ def get_experiment_naming(run_cfg, slurm_cfg):
             cab_name += f"-rl{rl}"
         name_parts.append(cab_name)
     elif use_loopholing:
+        loop_name = "loop"
+        if training.get("only_mask_tokens", False):
+            loop_name += "-mask"
+        if training.get("mlp_module", False):
+            loop_name += "-mlp"
         rl = _to_int(training.get("read_layer", -1))
         if rl != -1:
-            name_parts.append(f"loop-rl{rl}")
+            loop_name += f"-rl{rl}"
+        name_parts.append(loop_name)
 
     run_name = "_".join(name_parts)
     
@@ -183,7 +189,12 @@ def get_eval_naming(evaluation_cfg):
     if th > 0: eval_parts.append(f"th{th}")
     
     if model_args.get("use_loopholing", False):
-        eval_parts.append("loop")
+        loop_slug = "loop"
+        if model_args.get("only_mask_tokens", False):
+            loop_slug += "-mask"
+        if model_args.get("mlp_module", False):
+            loop_slug += "-mlp"
+        eval_parts.append(loop_slug)
         
     cfg = _to_float(model_args.get("cfg_scale", 0.0))
     if cfg > 0: eval_parts.append(f"cfg{cfg}")
