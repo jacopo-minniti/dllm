@@ -111,8 +111,9 @@ def train():
     tokenizer = dllm.utils.get_tokenizer(model_args=model_args)
 
     state = PartialState()
-    def time_log(msg):
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Rank {state.process_index}: {msg}", flush=True)
+    def time_log(msg, force=False):
+        if state.is_main_process or force:
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Rank {state.process_index}: {msg}", flush=True)
 
     # 1. First sync to ensure all ranks are starting the data phase together
     time_log("Checkpoint: Starting dataset initialization...")

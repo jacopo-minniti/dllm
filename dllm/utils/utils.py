@@ -139,8 +139,20 @@ def print_args_main(
         ("training_args", training_args),
     ]:
         d = asdict(args)
-        # keep it tiny: just show first few entries
-        short = {k: d[k] for k in list(d)}  # adjust number as you like
+        if name == "training_args":
+            # Filter for most relevant TrainingArguments to reduce noise
+            important_keys = [
+                "output_dir", "learning_rate", "num_train_epochs", 
+                "per_device_train_batch_size", "gradient_accumulation_steps",
+                "lr_scheduler_type", "warmup_ratio", "weight_decay",
+                "max_grad_norm", "logging_steps", "save_steps", "eval_steps",
+                "fp16", "bf16", "gradient_checkpointing", "ddp_find_unused_parameters",
+                "resume_from_checkpoint"
+            ]
+            short = {k: d[k] for k in important_keys if k in d}
+        else:
+            short = d
+            
         print_main(f"{name}:")
         pprint_main(short, width=100, compact=True, sort_dicts=False)
     print_main("============================\n")
