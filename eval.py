@@ -222,29 +222,49 @@ fi
 # ===== Scale Calculation =====
 # Evaluation is forced to 1 node for stability
 NUM_NODES=1
-GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\\n' | wc -l)
+if [ -n "$SLURM_GPUS_ON_NODE" ]; then
+    GPUS_PER_NODE=$(echo "$SLURM_GPUS_ON_NODE" | grep -oE '[0-9]+' | head -n 1)
+elif [ -n "$CUDA_VISIBLE_DEVICES" ]; then
+    GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\\n' | grep -v '^$' | wc -l)
+else
+    if command -v nvidia-smi &> /dev/null; then
+        GPUS_PER_NODE=$(nvidia-smi -L | wc -l)
+    else
+        GPUS_PER_NODE=1
+    fi
+fi
+GPUS_PER_NODE=${{GPUS_PER_NODE:-1}}
 WORLD_SIZE=$((NUM_NODES * GPUS_PER_NODE))
-MASTER_ADDR=$(scontrol show hostnames "${{SLURM_JOB_NODELIST:-localhost}}" | head -n 1)
-MASTER_PORT=$((20000 + ${{SLURM_JOB_ID:-0}} % 10000))
+
+# Get the master node name and resolve it to an IP
+MASTER_NAME=$(scontrol show hostnames "${{SLURM_JOB_NODELIST:-localhost}}" | head -n 1)
 
 if [ -z "$SLURM_JOB_ID" ]; then
     MASTER_ADDR="localhost"
     MASTER_PORT=29500
     SLURM_PROCID=0
+else
+    MASTER_ADDR=$MASTER_NAME
+    MASTER_PORT=$((20000 + ${{SLURM_JOB_ID:-0}} % 10000))
 fi
 
-echo "Launching Evaluation: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_ADDR:$MASTER_PORT"
+echo "🚀 Evaluation Scale: NUM_NODES=$NUM_NODES, GPUS_PER_NODE=$GPUS_PER_NODE, WORLD_SIZE=$WORLD_SIZE"
 
 # ===== Execution =====
+# Dynamically build accelerate launch arguments
+LAUNCH_ARGS="--num_processes $WORLD_SIZE"
+
+if [ "$WORLD_SIZE" -gt 1 ]; then
+    LAUNCH_ARGS="--multi_gpu $LAUNCH_ARGS --num_machines $NUM_NODES"
+    # Although eval is single-node, we still set these for consistency
+    LAUNCH_ARGS="$LAUNCH_ARGS --main_process_ip $MASTER_ADDR --main_process_port $MASTER_PORT --rdzv_backend static --machine_rank \$SLURM_PROCID"
+fi
+
+echo "🚀 Launching with: accelerate launch $LAUNCH_ARGS"
+
 srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" \\
-  bash -c "accelerate launch \\
+  bash -c "accelerate launch $LAUNCH_ARGS \\
   --config_file '{acc_config}' \\
-  --num_machines '${{NUM_NODES}}' \\
-  --num_processes '${{WORLD_SIZE}}' \\
-  --main_process_ip '${{MASTER_ADDR}}' \\
-  --main_process_port '${{MASTER_PORT}}' \\
-  --rdzv_backend static \\
-  --machine_rank \$SLURM_PROCID \\
   '{script_path}' {' '.join(eval_flags_escaped)}"
 """
 

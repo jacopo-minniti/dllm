@@ -244,7 +244,19 @@ set +a
 
 # ===== Scale Calculation =====
 NUM_NODES=${{SLURM_NNODES:-1}}
-GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\\n' | wc -l)
+if [ -n "$SLURM_GPUS_ON_NODE" ]; then
+    GPUS_PER_NODE=$(echo "$SLURM_GPUS_ON_NODE" | grep -oE '[0-9]+' | head -n 1)
+elif [ -n "$CUDA_VISIBLE_DEVICES" ]; then
+    GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\\n' | grep -v '^$' | wc -l)
+else
+    # Fallback to nvidia-smi if available, else 1
+    if command -v nvidia-smi &> /dev/null; then
+        GPUS_PER_NODE=$(nvidia-smi -L | wc -l)
+    else
+        GPUS_PER_NODE=1
+    fi
+fi
+GPUS_PER_NODE=${{GPUS_PER_NODE:-1}}
 WORLD_SIZE=$((NUM_NODES * GPUS_PER_NODE))
 
 # Get the master node name and resolve it to an IP
@@ -254,6 +266,7 @@ if [ -z "${{SLURM_JOB_ID}}" ]; then
     MASTER_ADDR="127.0.0.1"
     MASTER_PORT=29500
     SLURM_PROCID=0
+    SLURM_NODEID=0
 else
     # Resolve the master node name to its primary IP address
     # Prefer eth0 (10.1.x.x) for rdzv_endpoint as per Killarney documentation.
@@ -274,19 +287,30 @@ else
     MASTER_PORT=$((20000 + ${{SLURM_JOB_ID}} % 10000))
 fi
 
-echo "Launching: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on IP $MASTER_ADDR:$MASTER_PORT (via srun)"
+echo "🚀 Training Scale: NUM_NODES=$NUM_NODES, GPUS_PER_NODE=$GPUS_PER_NODE, WORLD_SIZE=$WORLD_SIZE"
 
 # ===== Execution =====
-srun --label --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch \\
-  --multi_gpu \\
+# Dynamically build accelerate launch arguments
+LAUNCH_ARGS="--num_processes $WORLD_SIZE"
+
+if [ "$WORLD_SIZE" -gt 1 ]; then
+    LAUNCH_ARGS="--multi_gpu $LAUNCH_ARGS --num_machines $NUM_NODES"
+    
+    # Multi-node specific
+    if [ "$NUM_NODES" -gt 1 ]; then
+        LAUNCH_ARGS="$LAUNCH_ARGS --main_process_ip $MASTER_ADDR --main_process_port $MASTER_PORT --machine_rank \$SLURM_NODEID --rdzv_backend c10d"
+    fi
+    
+    # FSDP transformer layer wrapping (only if using FSDP)
+    if [[ "{acc_config}" == *"fsdp"* ]]; then
+        LAUNCH_ARGS="$LAUNCH_ARGS --fsdp_transformer_layer_cls_to_wrap LLaDABlock"
+    fi
+fi
+
+echo "🚀 Launching with: accelerate launch $LAUNCH_ARGS"
+
+srun --label --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch $LAUNCH_ARGS \\
   --config_file \"{acc_config}\" \\
-  --num_machines \"${{NUM_NODES}}\" \\
-  --num_processes \"${{WORLD_SIZE}}\" \\
-  --main_process_ip \"${{MASTER_ADDR}}\" \\
-  --main_process_port \"${{MASTER_PORT}}\" \\
-  --fsdp_transformer_layer_cls_to_wrap \"LLaDABlock\" \\
-  --machine_rank \"\$SLURM_NODEID\" \\
-  --rdzv_backend c10d \\
   \"{script_path}\" {train_args_str}"
 """
 

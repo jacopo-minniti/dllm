@@ -1,7 +1,7 @@
-nodes: 2
+nodes: 1
 gpus_per_node: "h100:1"
 time: "01:00:00"
-mem: "150G"
+mem: "100G"
 cpus_per_task: 32
 ntasks_per_node: 1
 output: "./.logs/%x-%j.out"
