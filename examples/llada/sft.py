@@ -121,7 +121,7 @@ def train():
     # 2. All ranks load the raw dataset (each will wait for its own lock if needed)
     time_log("Checkpoint: Starting dataset initialization...")
     try:
-        time_log(f"All ranks: Attempting to load dataset from local offline cache (HF_OFFLINE=1)...")
+        time_log(f"All ranks: Attempting to load dataset (HF_OFFLINE is now disabled)...")
         dataset = dllm.data.load_sft_dataset(
             data_args.dataset_args,
             load_preprocessed_data=data_args.load_preprocessed_data,

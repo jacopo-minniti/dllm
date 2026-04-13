@@ -231,25 +231,43 @@ def load_pt_dataset(
         return merged
 
 
-def _truncate_split(split_data, n: int):
+def _truncate_split(split_data, n):
     if n is None:
         return split_data
+    
+    # 1. Ensure n is an integer for truncation
     try:
-        if hasattr(split_data, "select"):
-            # Hugging Face Dataset path
-            total = getattr(split_data, "num_rows", None)
-            if total is None:
-                # some Dataset types expose len(...)
-                total = len(split_data)
-            idx = list(range(min(n, total)))
-            return split_data.select(idx)
+        n = int(n)
+    except (ValueError, TypeError):
+        # Fallback to common sense if n is not an integer but should be
+        return split_data
+    
+    # 2. Check for Hugging Face Dataset (supports faster .select())
+    try:
+        from datasets import Dataset
+        if isinstance(split_data, Dataset):
+            total = len(split_data)
+            # Use select to return a new Dataset instead of a dict slice
+            return split_data.select(range(min(n, total)))
     except Exception:
         pass
+
+    # 3. Generic slice attempt
     try:
         return split_data[:n]
     except Exception:
-        # Last resort: iterate
-        return type(split_data)(item for i, item in enumerate(split_data) if i < n)
+        pass
+
+    # 4. Final resort: iteration
+    try:
+        items = []
+        for i, item in enumerate(split_data):
+            if i >= n:
+                break
+            items.append(item)
+        return type(split_data)(items)
+    except Exception:
+        return split_data
 
 
 def _truncate_datasetdict(ds, limits: dict):

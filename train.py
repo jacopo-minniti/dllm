@@ -147,23 +147,20 @@ def main():
         "export WANDB_DEBUG=false",
         "export HF_HOME=\"$PWD/.cache\"",
         "export HF_DATASETS_CACHE=\"$PWD/.cache/datasets\"",
-        "export HF_DATASETS_OFFLINE=1",
-        "export TRANSFORMERS_OFFLINE=1",
-        "export HF_HUB_OFFLINE=1",
+        "export HF_DATASETS_OFFLINE=0",
+        "export TRANSFORMERS_OFFLINE=0",
+        "export HF_HUB_OFFLINE=0",
         "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
+        # NCCL / InfiniBand setup for Killarney/Slurm
         "export NCCL_IB_DISABLE=0",
-        "export NCCL_CUMEM_ENABLE=0",
+        "export NCCL_SOCKET_IFNAME=ib0,eth,eno,enp,10.1,172",
+        "export NCCL_IB_HCA=mlx5_0",
         "export NCCL_TIMEOUT=7200",
         "export NCCL_IB_TIMEOUT=22",
         "export NCCL_IB_RETRY_CNT=14", 
-        "export NCCL_SOCKET_IFNAME=172.26,eno,enp,eth",
-        "export NCCL_DEBUG=DEBUG",
+        "export NCCL_DEBUG=INFO",
         "export NCCL_DEBUG_SUBSYS=ALL",
         "export TORCH_DISTRIBUTED_DEBUG=DETAIL",
-        "export TORCH_SHOW_CPP_STACKTRACES=1",
-        "export TORCH_CPP_LOG_LEVEL=WARNING",
-        "export NCCL_GRAPH_DUMP=1",
-        "export NCCL_NET_GDR_LEVEL=6",
         "export OMP_NUM_THREADS=16",
         "export PYTHONUNBUFFERED=1",
     ]
@@ -259,10 +256,15 @@ if [ -z "${{SLURM_JOB_ID}}" ]; then
     SLURM_PROCID=0
 else
     # Resolve the master node name to its primary IP address
-    # Try multiple common subnets for interconnects (172.x, 10.x, etc.)
-    MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && ($i ~ /^172/ || $i ~ /^10/)) {{f=1; print $i; exit}}}} END {{if(!f) print ""}}')
+    # Prefer eth0 (10.1.x.x) for rdzv_endpoint as per Killarney documentation.
+    MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i ~ /^10\.1\./) {{f=1; print $i; exit}}}} END {{if(!f) print ""}}')
     
-    # Fallback to any non-loopback IP if still empty
+    # Fallback to any 10.x or 172.x if no 10.1.x found
+    if [ -z "$MASTER_ADDR" ]; then
+        MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && ($i ~ /^10/ || $i ~ /^172/)) {{f=1; print $i; exit}}}} END {{if(!f) print ""}}')
+    fi
+    
+    # Final fallback to any non-loopback or hostname
     if [ -z "$MASTER_ADDR" ]; then
         MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i != "127.0.0.1") {{f=1; print $i; exit}}}} END {{if(!f) print ""}}')
     fi
