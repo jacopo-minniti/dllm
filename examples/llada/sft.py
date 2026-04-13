@@ -135,42 +135,53 @@ def train():
         raise e
     
     # 3. Handle Mapping/Processing
-    processed_cache_path = os.path.join(training_args.output_dir, "processed_dataset")
+    import hashlib
+    # Generate a unique hash for this dataset configuration to allow sharing across experiments
+    # This prevents re-tokenizing the same dataset when only training hyperparams (LR, BS) change.
+    cache_id = f"{data_args.dataset_args}_{data_args.use_chat_template}_{data_args.mask_prompt_loss}_{model_args.model_name_or_path}"
+    cache_hash = hashlib.md5(cache_id.encode()).hexdigest()
+    processed_cache_path = os.path.join(".cache", "processed_datasets", cache_hash)
     
     if not data_args.load_preprocessed_data:
-        if state.is_main_process:
-            time_log("Rank 0: Starting dataset mapping...")
-            map_fn = partial(
-                dllm.utils.default_sft_map_fn,
-                tokenizer=tokenizer,
-                mask_prompt_loss=data_args.mask_prompt_loss,
-                use_chat_template=data_args.use_chat_template,
-            )
-            # Strict num_proc=1 after CUDA init
-            dataset = dataset.map(
-                map_fn,
-                batched=False,
-                num_proc=1,
-                desc="Chat Template Mapping",
-            )
-            time_log("Rank 0: Mapping complete. Starting post_process_dataset...")
-            dataset = dllm.utils.post_process_dataset(dataset, data_args)
-            
-            time_log(f"Rank 0: Saving processed dataset to disk at {processed_cache_path}...")
-            dataset.save_to_disk(processed_cache_path)
-            time_log("Rank 0: Dataset saved to disk successfully.")
+        # Check if already processed globally
+        if os.path.exists(processed_cache_path) and os.path.exists(os.path.join(processed_cache_path, "dataset_info.json")):
+            time_log(f"🚀 Found existing processed dataset in global cache: {processed_cache_path}")
+            data_args.load_preprocessed_data = "SKIP_MAP" # Internal flag to skip mapping
+        else:
+            if state.is_main_process:
+                time_log("Rank 0: Starting dataset mapping...")
+                map_fn = partial(
+                    dllm.utils.default_sft_map_fn,
+                    tokenizer=tokenizer,
+                    mask_prompt_loss=data_args.mask_prompt_loss,
+                    use_chat_template=data_args.use_chat_template,
+                )
+                # Strict num_proc=1 after CUDA init
+                dataset = dataset.map(
+                    map_fn,
+                    batched=False,
+                    num_proc=1,
+                    desc="Chat Template Mapping",
+                )
+                time_log("Rank 0: Mapping complete. Starting post_process_dataset...")
+                dataset = dllm.utils.post_process_dataset(dataset, data_args)
+                
+                time_log(f"Rank 0: Saving processed dataset to shared cache at {processed_cache_path}...")
+                os.makedirs(os.path.dirname(processed_cache_path), exist_ok=True)
+                dataset.save_to_disk(processed_cache_path)
+                time_log("Rank 0: Dataset saved to shared cache successfully.")
         
-        # 4. Synchronize: all ranks wait for Rank 0 to finish mapping and saving
+        # 4. Synchronize: all ranks wait for Rank 0 to finish mapping and saving (if it was needed)
         time_log("Waiting at the PRE-processing sync barrier...")
         state.wait_for_everyone() 
         time_log("PRE-processing barrier cleared.")
         
-        # 5. Non-main ranks load the processed dataset from Rank 0's save path
-        if not state.is_main_process:
-            time_log("Non-main Rank: Loading processed data from shared disk...")
-            from datasets import load_from_disk
-            dataset = load_from_disk(processed_cache_path)
-            time_log("Non-main Rank: Disk load complete.")
+        # 5. All ranks load the processed dataset from the shared cache
+        # (This handles both the case where it was just created or already existed)
+        time_log(f"Rank {state.process_index}: Loading processed data from shared disk...")
+        from datasets import load_from_disk
+        dataset = load_from_disk(processed_cache_path)
+        time_log(f"Rank {state.process_index}: Disk load complete.")
     else:
         # If already preprocessed, we just ensure post-processing is consistent
         time_log("Using pre-processed flag. Finalizing dataset state...")
