@@ -14,7 +14,7 @@ load_dotenv()
 # =====================================================================
 # CONFIGURATION
 # =====================================================================
-DATA_PATH = ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-puma-bptt-cab/lr2e-05_bs256_puma-th0.15_bptt2_cab-b2048-e4096-rl15/checkpoint-500/evals/mnt512_s256_bs32_t0.0_th0.15_loop_nf4/.models__LLaDA-8B-Base__tulu-3-sft-mixture__base-puma-bptt-cab__lr2e-05_bs256_puma-th0.15_bptt2_cab-b2048-e4096-rl15__checkpoint-500/samples_math500_reasoning_2026-04-10T22-27-14.271619.jsonl"
+DATA_PATH = ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-puma-bptt-cab/lr5e-05_bs256_puma-th0.15_bptt4_cab-b512-e1024-rl15/checkpoint-final/evals/mnt512_s256_bs32_t0.0_th0.15_loop_nf4/.models__LLaDA-8B-Base__tulu-3-sft-mixture__base-puma-bptt-cab__lr5e-05_bs256_puma-th0.15_bptt4_cab-b512-e1024-rl15__checkpoint-final/samples_math500_reasoning_2026-04-11T21-23-25.222241.jsonl"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL_ID = "gemini-3.1-flash-lite-preview"
 

@@ -2,6 +2,7 @@ import os
 from types import SimpleNamespace
 
 import accelerate
+from accelerate import PartialState
 import torch
 import transformers
 from peft import prepare_model_for_kbit_training
@@ -39,7 +40,7 @@ def get_model(
     )
 
     # Device map: skip when ZeRO-3 or FSDP is enabled to allow proper sharding
-    ps = accelerate.PartialState()
+    ps = PartialState()
     is_sharded = (
         transformers.integrations.is_deepspeed_zero3_enabled() or 
         ps.distributed_type == accelerate.utils.DistributedType.FSDP
@@ -109,13 +110,14 @@ def get_model(
 
     # Pre-fetch remote models on rank 0 to avoid race conditions and host RAM OOM
     if base_model_path and not os.path.isdir(base_model_path) and not base_model_path.startswith(("/", ".")):
-        ps = accelerate.PartialState()
+        ps = PartialState()
         if ps.num_processes > 1:
             if ps.is_main_process:
-                print_main(f"ℹ️ Rank 0 is pre-fetching remote model: {base_model_path}")
-                # Trigger download of config at least
+                print(f"ℹ️ Rank 0: AutoConfig pre-fetch start...", flush=True)
                 transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
-            ps.wait_for_everyone()
+                print(f"✅ Rank 0: AutoConfig pre-fetch finished.", flush=True)
+            # Remove wait_for_everyone() here as it is causing a deadlock on some nodes.
+            # Transformers handles concurrent downloads/loading gracefully via file locks.
 
     # --- Checkpoint Self-Containment Check ---
     # If base_model_path is a directory, ensure it has the LLaDA code files for trust_remote_code
@@ -129,13 +131,16 @@ def get_model(
                     is_llada = True
         
         if is_llada:
-            model_src = "dllm/pipelines/llada/models/"
-            if os.path.exists(model_src):
-                print_main(f"ℹ️ Rescuing missing modeling files in {base_model_path}...")
-                import shutil
-                for f in os.listdir(model_src):
-                    if f.endswith(".py"):
-                        shutil.copy2(os.path.join(model_src, f), base_model_path)
+            ps = PartialState()
+            if ps.is_main_process:
+                model_src = "dllm/pipelines/llada/models/"
+                if os.path.exists(model_src):
+                    print(f"Rank 0: Rescuing missing modeling files in {base_model_path} from {model_src}...", flush=True)
+                    import shutil
+                    for f in os.listdir(model_src):
+                        if f.endswith(".py"):
+                            shutil.copy2(os.path.join(model_src, f), base_model_path)
+            ps.wait_for_everyone() # Wait for Rank 0 to finish copying
 
     try:
         # Detect model type to force local implementation if it's LLaDA
@@ -178,7 +183,7 @@ def get_model(
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, model_name_or_path)
         # Sync after heavy PEFT loading
-        ps = accelerate.PartialState()
+        ps = PartialState()
         if ps.num_processes > 1:
             ps.wait_for_everyone()
         print_main("✅ PEFT adapter loaded successfully.")

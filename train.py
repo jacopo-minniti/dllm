@@ -135,11 +135,9 @@ def main():
                 else:
                     slurm_directives.append(f"#SBATCH {flag} {v}")
 
-    # 4. Prepare Training Command
-    training = run_cfg.get("training", {})
-    script_path = training.pop("script_path", "examples/llada/sft.py")
+    # 3. Environment Context
+    master_addr = subprocess.check_output(["hostname", "-i"]).decode().split()[0]
     
-    # 3. Setup WandB and Environment Variables
     env_exports = [
         f"export WANDB_NAME=\"{name}\"",
         f"export WANDB_RUN_GROUP=\"{group}\"",
@@ -147,7 +145,27 @@ def main():
         f"export WANDB_PROJECT=\"{os.getenv('WANDB_PROJECT', 'BPTT-llada')}\"",
         "export WANDB_INIT_TIMEOUT=300",
         "export WANDB_DEBUG=false",
-        "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1"
+        "export HF_HOME=\"$PWD/.cache\"",
+        "export HF_DATASETS_CACHE=\"$PWD/.cache/datasets\"",
+        "export HF_DATASETS_OFFLINE=1",
+        "export TRANSFORMERS_OFFLINE=1",
+        "export HF_HUB_OFFLINE=1",
+        "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
+        "export NCCL_IB_DISABLE=0",
+        "export NCCL_CUMEM_ENABLE=0",
+        "export NCCL_TIMEOUT=7200",
+        "export NCCL_IB_TIMEOUT=22",
+        "export NCCL_IB_RETRY_CNT=14", 
+        "export NCCL_SOCKET_IFNAME=172.26,eno,enp,eth",
+        "export NCCL_DEBUG=DEBUG",
+        "export NCCL_DEBUG_SUBSYS=ALL",
+        "export TORCH_DISTRIBUTED_DEBUG=DETAIL",
+        "export TORCH_SHOW_CPP_STACKTRACES=1",
+        "export TORCH_CPP_LOG_LEVEL=WARNING",
+        "export NCCL_GRAPH_DUMP=1",
+        "export NCCL_NET_GDR_LEVEL=6",
+        "export OMP_NUM_THREADS=16",
+        "export PYTHONUNBUFFERED=1",
     ]
 
     # 4. Prepare Training Command
@@ -197,7 +215,12 @@ def main():
     working_dir = slurm_cfg.get("working_dir", os.getcwd())
 
     # 5. Generate the Slurm Bash Script
-    bash_script = f"""{chr(10).join(slurm_directives)}
+    slurm_header = chr(10).join(slurm_directives)
+    train_args_str = " ".join(train_flags)
+    # Use a literal for the AWK command to avoid f-string escaping hell
+    awk_cmd = "awk '{for(i=1;i<=NF;i++) if($i ~ /^172\\.25\\./) {sub(/\\/.*/, \"\", $i); print $i; exit}}'"
+    
+    bash_script = f"""{slurm_header}
 set -e
 
 # ===== System Environment =====
@@ -223,35 +246,40 @@ set +a
 
 # ===== Exports =====
 {chr(10).join(env_exports)}
-export NCCL_SOCKET_IFNAME=eth0,enp,eno
-export NCCL_DEBUG=INFO
-export PYTHONUNBUFFERED=1
 
 # ===== Scale Calculation =====
 NUM_NODES=${{SLURM_NNODES:-1}}
 GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\\n' | wc -l)
 WORLD_SIZE=$((NUM_NODES * GPUS_PER_NODE))
-MASTER_ADDR=$(scontrol show hostnames "${{SLURM_JOB_NODELIST:-localhost}}" | head -n 1)
-MASTER_PORT=$((20000 + ${{SLURM_JOB_ID:-0}} % 10000))
 
-if [ -z "$SLURM_JOB_ID" ]; then
-    MASTER_ADDR="localhost"
+# Get the master node name and resolve it to an IP
+MASTER_NAME=$(scontrol show hostnames "${{SLURM_JOB_NODELIST:-localhost}}" | head -n 1)
+
+if [ -z "${{SLURM_JOB_ID}}" ]; then
+    MASTER_ADDR="127.0.0.1"
     MASTER_PORT=29500
     SLURM_PROCID=0
+else
+    # Resolve the master node name to its primary IP address
+    # Filter out 127.0.0.1 and pick the first management/interconnect IP
+    MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && $i ~ /^172/) {{print $i; exit}}}}')
+    MASTER_PORT=$((20000 + ${{SLURM_JOB_ID}} % 10000))
 fi
 
-echo "Launching: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on $MASTER_ADDR:$MASTER_PORT (via srun)"
+echo "Launching: NUM_NODES=$NUM_NODES, GPUS=$WORLD_SIZE on IP $MASTER_ADDR:$MASTER_PORT (via srun)"
 
 # ===== Execution =====
-srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch \\
+srun --label --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch \\
+  --multi_gpu \\
   --config_file \"{acc_config}\" \\
   --num_machines \"${{NUM_NODES}}\" \\
   --num_processes \"${{WORLD_SIZE}}\" \\
   --main_process_ip \"${{MASTER_ADDR}}\" \\
   --main_process_port \"${{MASTER_PORT}}\" \\
+  --fsdp_transformer_layer_cls_to_wrap \"LLaDABlock\" \\
   --machine_rank \"\$SLURM_NODEID\" \\
   --rdzv_backend c10d \\
-  \"{script_path}\" {" ".join(train_flags)}"
+  \"{script_path}\" {train_args_str}"
 """
 
     # Write to a temporary file

@@ -108,12 +108,12 @@ def post_process_dataset(
         if "prompt_len" in dataset.column_names["train"]:
             dataset = dataset.filter(
                 lambda row: row["prompt_len"] <= data_args.max_length,
-                num_proc=data_args.num_proc,
+                num_proc=None,
                 desc=f"Filtering samples with `prompt_len` <= {data_args.max_length}",
             )
         return dataset.map(
             lambda row: clip_row(row, data_args.max_length, truncation="right"),
-            num_proc=data_args.num_proc,
+            num_proc=None, # Disable multiprocessing here to avoid fork/NCCL conflicts
             desc=f"Right-truncating samples to max_length={data_args.max_length}",
         )
     else:

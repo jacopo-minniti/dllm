@@ -71,20 +71,26 @@ def load_sft_dataset(
         elif _match(dataset_name_or_path, "tatsu-lab/alpaca"):
             ds = load_dataset_alpaca(dataset_name_or_path)
         elif _match(dataset_name_or_path, "allenai/tulu-3-sft-mixture"):
-            # Tulu is huge, avoid loading everything if possible
-            # Check if we can derive splits from kvs
-            has_limits = any(k in kvs for k in ["train", "test", "validation"])
-            if has_limits:
-                 # Pass the largest limit to load_dataset to minimize RAM
-                 # Actually, load_dataset with slice is best
-                 train_limit = kvs.get("train")
-                 split_arg = f"train[:{train_limit}]" if train_limit else "train"
-                 ds = load_dataset(dataset_name_or_path, split=split_arg)
-                 # Re-wrap in dict because load_sft expects DatasetDict later
-                 ds = DatasetDict({"train": ds})
+            # Tulu is big, we support slicing via train:50000, test:1000, etc.
+            ds_dict = {}
+            for split_name in ["train", "test", "validation"]:
+                limit = kvs.get(split_name)
+                if limit:
+                    # If it's pure number, like :50000, we prepend : for HF
+                    if ":" not in str(limit):
+                        slice_str = f"[:{limit}]"
+                    else:
+                        slice_str = f"[{limit}]"
+                    
+                    logger.info(f"Loading '{split_name}' split with slice '{slice_str}' from {dataset_name_or_path}...")
+                    ds_dict[split_name] = load_dataset(dataset_name_or_path, split=f"train{slice_str}")
+            
+            if not ds_dict:
+                logger.info(f"No slices specified for {dataset_name_or_path}. Loading default split and splitting...")
+                ds = load_dataset(dataset_name_or_path)
+                ds = ds["train"].train_test_split(test_size=0.05, seed=42)
             else:
-                 ds = load_dataset(dataset_name_or_path)
-                 ds = ds["train"].train_test_split(test_size=0.05, seed=42)
+                ds = DatasetDict(ds_dict)
         elif _match(dataset_name_or_path, "HuggingFaceTB/smoltalk"):
             name = kvs.pop("name", "all")
             ds = load_dataset(dataset_name_or_path, name=name)

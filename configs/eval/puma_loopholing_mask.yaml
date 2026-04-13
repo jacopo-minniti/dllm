@@ -1,7 +1,7 @@
 evaluation:
   # Evaluation Harness
   script_path: "dllm/pipelines/llada/eval.py"
-  tasks: "math50_reasoning,math500_reasoning"
+  tasks: "math50_reasoning"
   num_fewshot: 4
   batch_size: 8
   seed: 42

@@ -32,8 +32,12 @@ import sys
 from dataclasses import dataclass, field
 from functools import partial
 
+import datetime
 import accelerate
+from accelerate import PartialState
 import transformers
+import datasets
+datasets.config.DEFAULT_NUM_PROC = 1
 
 import dllm
 
@@ -96,38 +100,88 @@ def train():
     dllm.utils.print_args_main(model_args, data_args, training_args)
     dllm.utils.initial_training_setup(model_args, data_args, training_args)
 
+    # Force single-threading to prevent fork/NCCL deadlocks
+    data_args.num_proc = 1
+    training_args.dataloader_num_workers = 0
+    training_args.group_by_length = False 
+    
     # ----- Model ------------------------------------------------------------------
     model = dllm.utils.get_model(model_args=model_args)
     # ----- Tokenizer --------------------------------------------------------------
     tokenizer = dllm.utils.get_tokenizer(model_args=model_args)
 
-    # ----- Dataset ----------------------------------------------------------------
-    # Use global rank 0 first to download and prepare the dataset (especially for multi-node)
-    state = accelerate.PartialState()
-    with state.main_process_first():
+    state = PartialState()
+    def time_log(msg):
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Rank {state.process_index}: {msg}", flush=True)
+
+    # 1. First sync to ensure all ranks are starting the data phase together
+    time_log("Checkpoint: Starting dataset initialization...")
+    state.wait_for_everyone() 
+    
+    # 2. All ranks load the raw dataset (each will wait for its own lock if needed)
+    time_log("Checkpoint: Starting dataset initialization...")
+    try:
+        time_log(f"All ranks: Attempting to load dataset from local offline cache (HF_OFFLINE=1)...")
         dataset = dllm.data.load_sft_dataset(
             data_args.dataset_args,
             load_preprocessed_data=data_args.load_preprocessed_data,
         )
-        if not data_args.load_preprocessed_data:
+        time_log("All ranks: Raw dataset load succeeded.")
+    except Exception as e:
+        import traceback
+        time_log(f"CRITICAL: Dataset loading failed on Rank {state.process_index}!")
+        time_log(traceback.format_exc())
+        time_log("CRASH ALERT: If you see 'ConnectionError', the local cache is incomplete and Rank 0 tried to reach the Hub.")
+        raise e
+    
+    # 3. Handle Mapping/Processing
+    processed_cache_path = os.path.join(training_args.output_dir, "processed_dataset")
+    
+    if not data_args.load_preprocessed_data:
+        if state.is_main_process:
+            time_log("Rank 0: Starting dataset mapping...")
             map_fn = partial(
                 dllm.utils.default_sft_map_fn,
                 tokenizer=tokenizer,
                 mask_prompt_loss=data_args.mask_prompt_loss,
                 use_chat_template=data_args.use_chat_template,
             )
-            # Only use multiple processes for mapping on the main process to avoid thundering herd on cache locks
-            # For non-main processes, they should just load the cached version.
+            # Strict num_proc=1 after CUDA init
             dataset = dataset.map(
                 map_fn,
-                num_proc=data_args.num_proc if state.is_main_process else 1,
-                desc="Mapping dataset to SFT format",
+                batched=False,
+                num_proc=1,
+                desc="Chat Template Mapping",
             )
-        # truncate / filter long sequences if needed
+            time_log("Rank 0: Mapping complete. Starting post_process_dataset...")
+            dataset = dllm.utils.post_process_dataset(dataset, data_args)
+            
+            time_log(f"Rank 0: Saving processed dataset to disk at {processed_cache_path}...")
+            dataset.save_to_disk(processed_cache_path)
+            time_log("Rank 0: Dataset saved to disk successfully.")
+        
+        # 4. Synchronize: all ranks wait for Rank 0 to finish mapping and saving
+        time_log("Waiting at the PRE-processing sync barrier...")
+        state.wait_for_everyone() 
+        time_log("PRE-processing barrier cleared.")
+        
+        # 5. Non-main ranks load the processed dataset from Rank 0's save path
+        if not state.is_main_process:
+            time_log("Non-main Rank: Loading processed data from shared disk...")
+            from datasets import load_from_disk
+            dataset = load_from_disk(processed_cache_path)
+            time_log("Non-main Rank: Disk load complete.")
+    else:
+        # If already preprocessed, we just ensure post-processing is consistent
+        time_log("Using pre-processed flag. Finalizing dataset state...")
         dataset = dllm.utils.post_process_dataset(dataset, data_args)
 
+    # 6. Final sync before training starts
+    time_log("Checkpoint: Entering final pre-training barrier...")
+    state.wait_for_everyone()
+    time_log("Checkpoint: All ranks synced. Releasing to trainer.")
+
     # ----- Training --------------------------------------------------------------
-    accelerate.PartialState().wait_for_everyone()
     logger.info("Start training...")
     trainer = dllm.core.trainers.MDLMTrainer(
         model=model,

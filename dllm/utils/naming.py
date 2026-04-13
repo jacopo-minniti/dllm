@@ -13,6 +13,31 @@ def _to_int(v, default=0):
     except (ValueError, TypeError):
         return default
 
+def _format_rl(v):
+    if v == -1 or v is None:
+        return None
+    if isinstance(v, list):
+        if not v or v == [-1]:
+            return None
+        # Clean up any potential -1 in the list
+        v_clean = [x for x in v if x != -1]
+        if not v_clean:
+            return None
+        return "-".join(map(str, v_clean))
+    # If it's a string representation of a list (e.g. from CLI "[15,20]")
+    if isinstance(v, str) and v.startswith("[") and v.endswith("]"):
+        try:
+            import ast
+            parsed = ast.literal_eval(v)
+            if isinstance(parsed, list):
+                return _format_rl(parsed)
+        except:
+            pass
+    # If it's a single value but not -1
+    if str(v) == "-1":
+        return None
+    return str(v)
+
 def flatten_config_dict(d, exclude_keys=None):
     if exclude_keys is None:
         exclude_keys = ["model_args", "gen_kwargs", "wandb_args"]
@@ -111,12 +136,13 @@ def get_experiment_naming(run_cfg, slurm_cfg):
     if use_cab:
         b = training.get("cab_bottleneck_dim", 256)
         e = training.get("cab_mlp_expansion_dim", 512)
-        rl = _to_int(training.get("read_layer", -1))
+        rl_raw = training.get("read_layers", training.get("read_layer", -1))
+        rl_str = _format_rl(rl_raw)
         cab_name = f"cab-b{b}-e{e}"
         if training.get("only_mask_tokens", False):
             cab_name += "-mask"
-        if rl != -1:
-            cab_name += f"-rl{rl}"
+        if rl_str:
+            cab_name += f"-rl{rl_str}"
         name_parts.append(cab_name)
     elif use_loopholing:
         loop_name = "loop"
@@ -124,9 +150,10 @@ def get_experiment_naming(run_cfg, slurm_cfg):
             loop_name += "-mask"
         if training.get("mlp_module", False):
             loop_name += "-mlp"
-        rl = _to_int(training.get("read_layer", -1))
-        if rl != -1:
-            loop_name += f"-rl{rl}"
+        rl_raw = training.get("read_layers", training.get("read_layer", -1))
+        rl_str = _format_rl(rl_raw)
+        if rl_str:
+            loop_name += f"-rl{rl_str}"
         name_parts.append(loop_name)
 
     run_name = "_".join(name_parts)
@@ -190,12 +217,18 @@ def get_eval_naming(evaluation_cfg):
     th = _to_float(model_args.get("threshold", 0.0))
     if th > 0: eval_parts.append(f"th{th}")
     
-    if model_args.get("use_loopholing", False):
-        loop_slug = "loop"
+    if model_args.get("use_loopholing", False) or model_args.get("use_cab", False):
+        is_cab = model_args.get("use_cab", False)
+        loop_slug = "cab" if is_cab else "loop"
         if model_args.get("only_mask_tokens", False):
             loop_slug += "-mask"
         if model_args.get("mlp_module", False):
             loop_slug += "-mlp"
+        
+        rl_raw = model_args.get("read_layers", model_args.get("read_layer", -1))
+        rl_str = _format_rl(rl_raw)
+        if rl_str:
+            loop_slug += f"-rl{rl_str}"
         eval_parts.append(loop_slug)
         
     cfg = _to_float(model_args.get("cfg_scale", 0.0))

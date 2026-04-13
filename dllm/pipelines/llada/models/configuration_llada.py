@@ -132,6 +132,14 @@ class ModelConfig():
     LLaDA (model) configuration.
     """
 
+    def __post_init__(self):
+        # Ensure read_layers is always a list
+        if hasattr(self, "read_layers"):
+            if isinstance(self.read_layers, int):
+                self.read_layers = [self.read_layers]
+            elif self.read_layers is None:
+                self.read_layers = [-1]
+
     # Note that the defaults for these attributes are equivalent to the base GPT2 model.
 
     d_model: int = 768

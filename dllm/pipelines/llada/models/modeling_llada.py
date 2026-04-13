@@ -680,9 +680,13 @@ class LoopholeModule(nn.Module):
         
         # Multi-layer learned gate
         self.multi_layer_gate = None
-        if len(config.read_layers) > 1:
-            if len(config.read_layers) > 2:
-                raise ValueError(f"Loopholing only supports up to 2 layers for addition. Found {len(config.read_layers)} layers.")
+        read_layers = config.read_layers
+        if isinstance(read_layers, int):
+            read_layers = [read_layers]
+            
+        if len(read_layers) > 1:
+            if len(read_layers) > 2:
+                raise ValueError(f"Loopholing only supports up to 2 layers for addition. Found {len(read_layers)} layers.")
             # Initialize to 0.0 (sigmoid(0.0) = 0.5) for equal mixing at start
             self.multi_layer_gate = nn.Parameter(torch.zeros(1, device=config.init_device))
 
@@ -1649,7 +1653,10 @@ class LLaDAModel(LLaDAPreTrainedModel):
         # Collect hidden states for loopholing/CAB
         collected_h_s = {}
         all_hidden_states = []
-        read_layers_indices = set(self.config.read_layers)
+        read_layers = self.config.read_layers
+        if isinstance(read_layers, int):
+            read_layers = [read_layers]
+        read_layers_indices = set(read_layers)
 
         # Apply blocks one-by-one.
         if self.config.block_group_size == 1:
