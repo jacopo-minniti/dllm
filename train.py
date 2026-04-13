@@ -217,8 +217,6 @@ def main():
     # 5. Generate the Slurm Bash Script
     slurm_header = chr(10).join(slurm_directives)
     train_args_str = " ".join(train_flags)
-    # Use a literal for the AWK command to avoid f-string escaping hell
-    awk_cmd = "awk '{for(i=1;i<=NF;i++) if($i ~ /^172\\.25\\./) {sub(/\\/.*/, \"\", $i); print $i; exit}}'"
     
     bash_script = f"""{slurm_header}
 set -e
@@ -261,8 +259,16 @@ if [ -z "${{SLURM_JOB_ID}}" ]; then
     SLURM_PROCID=0
 else
     # Resolve the master node name to its primary IP address
-    # Filter out 127.0.0.1 and pick the first management/interconnect IP
-    MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && $i ~ /^172/) {{print $i; exit}}}}')
+    # Try multiple common subnets for interconnects (172.x, 10.x, etc.)
+    MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && ($i ~ /^172/ || $i ~ /^10/)) {{f=1; print $i; exit}}}} END {{if(!f) print ""}}')
+    
+    # Fallback to any non-loopback IP if still empty
+    if [ -z "$MASTER_ADDR" ]; then
+        MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i != "127.0.0.1") {{f=1; print $i; exit}}}} END {{if(!f) print ""}}')
+    fi
+    
+    # Final fallback to hostname
+    MASTER_ADDR=${{MASTER_ADDR:-$MASTER_NAME}}
     MASTER_PORT=$((20000 + ${{SLURM_JOB_ID}} % 10000))
 fi
 
