@@ -14,6 +14,23 @@ from .configs import ModelArguments, TrainingArguments
 from .utils import disable_caching_allocator_warmup, load_peft, print_main
 
 
+def is_local_model(path: str) -> bool:
+    """Check if a path is a valid local model directory with weights."""
+    if not path or not os.path.isdir(path):
+        return False
+    # Must have a config
+    if not os.path.exists(os.path.join(path, "config.json")):
+        return False
+    # Must have some form of weights
+    weight_indicators = [
+        "pytorch_model.bin", "model.safetensors", 
+        "pytorch_model.bin.index.json", "model.safetensors.index.json",
+        "adapter_model.bin", "adapter_model.safetensors",
+        "adapter_config.json"
+    ]
+    return any(os.path.exists(os.path.join(path, f)) for f in weight_indicators)
+
+
 def get_model(
     model_args: ModelArguments | None = None,
     config: transformers.PretrainedConfig | None = None,
@@ -83,22 +100,23 @@ def get_model(
         "trust_remote_code": True,
     }
 
-    # Ensure local paths are recognized as such by transformers (starting with ./ or absolute)
+    # Shadowing protection: only treat as local path if weights actually exist.
+    # Otherwise, it might be a Hub repo name shadowing a local empty directory.
     if model_name_or_path and not model_name_or_path.startswith("/"):
-        if model_name_or_path.startswith(".") or os.path.isdir(model_name_or_path):
+        if model_name_or_path.startswith(".") or is_local_model(model_name_or_path):
              model_name_or_path = os.path.abspath(model_name_or_path)
 
-    # Detect if we are loading a PEFT checkpoint
+    # Detect if we are loading a PEFT checkpoint (local only)
     is_peft = False
-    if model_name_or_path and os.path.isdir(model_name_or_path):
+    if model_name_or_path and is_local_model(model_name_or_path):
         if os.path.exists(os.path.join(model_name_or_path, "adapter_config.json")):
             is_peft = True
             from peft import PeftConfig
             peft_config = PeftConfig.from_pretrained(model_name_or_path)
             base_model_path = peft_config.base_model_name_or_path
-            # If base model is also a local path, make it absolute
+            # Shadowing protection for base model path as well
             if base_model_path and not base_model_path.startswith("/"):
-                if base_model_path.startswith(".") or os.path.isdir(base_model_path):
+                if base_model_path.startswith(".") or is_local_model(base_model_path):
                     base_model_path = os.path.abspath(base_model_path)
             print_main(f"ℹ️ Detected PEFT checkpoint. Loading base model: {base_model_path}")
         else:
@@ -106,9 +124,9 @@ def get_model(
     else:
         base_model_path = model_name_or_path
 
-    # Final absolute path guarantee before calling transformers
+    # Absolute path reconciliation
     if base_model_path and not base_model_path.startswith("/"):
-        if base_model_path.startswith(".") or os.path.isdir(base_model_path):
+        if base_model_path.startswith(".") or is_local_model(base_model_path):
             base_model_path = os.path.abspath(base_model_path)
 
     # Pre-fetch remote models on rank 0 to avoid race conditions and host RAM OOM
