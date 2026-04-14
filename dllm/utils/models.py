@@ -1,5 +1,6 @@
 import os
 from types import SimpleNamespace
+import json
 
 import accelerate
 from accelerate import PartialState
@@ -7,6 +8,8 @@ import torch
 import transformers
 from peft import prepare_model_for_kbit_training
 
+# Ensure all custom architectures (LLaDA, Dream, etc.) are registered
+import dllm.pipelines
 from .configs import ModelArguments, TrainingArguments
 from .utils import disable_caching_allocator_warmup, load_peft, print_main
 
@@ -113,27 +116,33 @@ def get_model(
         ps = PartialState()
         if ps.num_processes > 1:
             if ps.is_main_process:
-                print(f"ℹ️ Rank 0: AutoConfig pre-fetch start...", flush=True)
-                transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
-                print(f"✅ Rank 0: AutoConfig pre-fetch finished.", flush=True)
-            # Remove wait_for_everyone() here as it is causing a deadlock on some nodes.
-            # Transformers handles concurrent downloads/loading gracefully via file locks.
+                print(f"ℹ️ Rank 0: Config pre-fetch start (detecting model type)...", flush=True)
+                # First try without remote code to detect locally registered types
+                try:
+                    transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=False)
+                except Exception:
+                    # Fallback to remote code if not registered yet
+                    transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
+                print(f"✅ Rank 0: Config pre-fetch finished.", flush=True)
 
-    # --- Checkpoint Self-Containment Check ---
-    # If base_model_path is a directory, ensure it has the LLaDA code files for trust_remote_code
-    if os.path.isdir(base_model_path) and not os.path.exists(os.path.join(base_model_path, "configuration_llada.py")):
-        # Only do this for LLaDA models
-        is_llada = False
-        if os.path.exists(os.path.join(base_model_path, "config.json")):
-            with open(os.path.join(base_model_path, "config.json"), "r") as f:
-                import json
-                if json.load(f).get("model_type") == "llada": 
-                    is_llada = True
-        
-        if is_llada:
+    # --- Checkpoint Self-Containment and Type Detection ---
+    is_llada = False
+    model_type = None
+    
+    # Try to detect model_type without executing remote code first
+    try:
+        cfg_dict, _ = transformers.AutoConfig.get_config_dict(base_model_path, trust_remote_code=True)
+        model_type = cfg_dict.get("model_type")
+    except Exception:
+        pass
+
+    if model_type == "llada":
+        is_llada = True
+        # If base_model_path is a directory, ensure it has the LLaDA code files for trust_remote_code fallback
+        if os.path.isdir(base_model_path) and not os.path.exists(os.path.join(base_model_path, "configuration_llada.py")):
             ps = PartialState()
             if ps.is_main_process:
-                model_src = "dllm/pipelines/llada/models/"
+                model_src = os.path.join(os.path.dirname(os.path.dirname(__file__)), "pipelines/llada/models/")
                 if os.path.exists(model_src):
                     print(f"Rank 0: Rescuing missing modeling files in {base_model_path} from {model_src}...", flush=True)
                     import shutil
@@ -143,12 +152,20 @@ def get_model(
             ps.wait_for_everyone() # Wait for Rank 0 to finish copying
 
     try:
-        # Detect model type to force local implementation if it's LLaDA
-        # this ensures local features like loopholing (h_t) are available
-        check_config = config or transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
+        # 1. Attempt loading with trust_remote_code=False first.
+        # This prioritizes our LOCAL implementations (via the dllm.pipelines import above)
+        # over the Hub's auto_map, preventing crashes if the Hub repo is missing files.
+        try:
+             check_config = config or transformers.AutoConfig.from_pretrained(
+                 base_model_path, trust_remote_code=False
+             )
+        except Exception:
+             # 2. Fallback to trust_remote_code=True for standard/third-party models
+             check_config = config or transformers.AutoConfig.from_pretrained(
+                 base_model_path, trust_remote_code=True
+             )
         
         # Propagate all custom settings to the config object strictly
-        # This avoids passing them as kwargs to from_pretrained which can cause __init__ errors
         custom_fields = {
             "use_loopholing": getattr(model_args, "use_loopholing", False),
             "only_mask_tokens": getattr(model_args, "only_mask_tokens", False),
@@ -176,6 +193,7 @@ def get_model(
                  base_model_path, config=check_config, **params
              )
     except Exception:
+        # Last resort fallback to base AutoModel
         model = transformers.AutoModel.from_pretrained(base_model_path, **params)
 
     if is_peft:
