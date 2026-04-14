@@ -126,7 +126,7 @@ def get_model(
                 print(f"✅ Rank 0: Config pre-fetch finished.", flush=True)
 
     # --- Checkpoint Self-Containment and Type Detection ---
-    is_llada = False
+    is_custom = False
     model_type = None
     
     # Try to detect model_type without executing remote code first
@@ -136,10 +136,20 @@ def get_model(
     except Exception:
         pass
 
-    if model_type == "llada":
-        is_llada = True
-        # If base_model_path is a directory, ensure it has the LLaDA code files for trust_remote_code fallback
-        if os.path.isdir(base_model_path) and not os.path.exists(os.path.join(base_model_path, "configuration_llada.py")):
+    # Use custom loading logic for LLaDA to bypass AutoModel/AutoConfig registry issues
+    if model_type in ["llada", "lladamoe"]:
+        is_custom = True
+        if model_type == "llada":
+            from dllm.pipelines.llada.models import LLaDAConfig, LLaDAModelLM
+            config_cls, model_cls = LLaDAConfig, LLaDAModelLM
+            modeling_file = "configuration_llada.py"
+        else:
+            from dllm.pipelines.llada.models import LLaDAMoEConfig, LLaDAMoEModelLM
+            config_cls, model_cls = LLaDAMoEConfig, LLaDAMoEModelLM
+            modeling_file = "configuration_lladamoe.py"
+
+        # If base_model_path is a directory, ensure it has the modeling code files for trust_remote_code fallback
+        if os.path.isdir(base_model_path) and not os.path.exists(os.path.join(base_model_path, modeling_file)):
             ps = PartialState()
             if ps.is_main_process:
                 model_src = os.path.join(os.path.dirname(os.path.dirname(__file__)), "pipelines/llada/models/")
@@ -149,45 +159,53 @@ def get_model(
                     for f in os.listdir(model_src):
                         if f.endswith(".py"):
                             shutil.copy2(os.path.join(model_src, f), base_model_path)
-            ps.wait_for_everyone() # Wait for Rank 0 to finish copying
+            ps.wait_for_everyone() 
 
-    try:
-        # 1. Attempt loading with trust_remote_code=False first.
-        # This prioritizes our LOCAL implementations (via the dllm.pipelines import above)
-        # over the Hub's auto_map, preventing crashes if the Hub repo is missing files.
+        # Load config directly to bypass AutoConfig resolution bugs
+        check_config = config or config_cls.from_pretrained(base_model_path)
+    else:
+        # Standard transformers loading
         try:
-             check_config = config or transformers.AutoConfig.from_pretrained(
-                 base_model_path, trust_remote_code=False
-             )
+            # 1. Attempt loading with trust_remote_code=False first.
+            # This prioritizes our LOCAL implementations (via the dllm.pipelines import above)
+            # over the Hub's auto_map, preventing crashes if the Hub repo is missing files.
+            try:
+                 check_config = config or transformers.AutoConfig.from_pretrained(
+                     base_model_path, trust_remote_code=False
+                 )
+            except Exception:
+                 # 2. Fallback to trust_remote_code=True for standard/third-party models
+                 check_config = config or transformers.AutoConfig.from_pretrained(
+                     base_model_path, trust_remote_code=True
+                 )
         except Exception:
-             # 2. Fallback to trust_remote_code=True for standard/third-party models
-             check_config = config or transformers.AutoConfig.from_pretrained(
-                 base_model_path, trust_remote_code=True
-             )
-        
-        # Propagate all custom settings to the config object strictly
-        custom_fields = {
-            "use_loopholing": getattr(model_args, "use_loopholing", False),
-            "only_mask_tokens": getattr(model_args, "only_mask_tokens", False),
-            "mlp_module": getattr(model_args, "mlp_module", False),
-            "use_cab": getattr(model_args, "use_cab", False),
-            "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
-            "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
-            "read_layers": getattr(model_args, "read_layer", [-1]),
-            "cab_n_heads": getattr(model_args, "cab_n_heads", 8),
-            "cab_n_kv_heads": getattr(model_args, "cab_n_kv_heads", 4),
-            "attention_dropout": getattr(model_args, "attention_dropout", None),
-            "residual_dropout": getattr(model_args, "residual_dropout", None),
-            "embedding_dropout": getattr(model_args, "embedding_dropout", None),
-        }
-        for field_name, value in custom_fields.items():
-            if value is not None:
-                setattr(check_config, field_name, value)
-                
-        if getattr(check_config, "model_type", None) == "llada":
-             from dllm.pipelines.llada.models.modeling_llada import LLaDAModelLM
-             print_main(f"ℹ️ Forcing local LLaDAModelLM. Config: CAB={check_config.use_cab}, Loop={check_config.use_loopholing}")
-             model = LLaDAModelLM.from_pretrained(base_model_path, config=check_config, **params)
+            # Last resort fallback if everything else fails
+            check_config = config
+
+    # Propagate all custom settings to the config object strictly
+    custom_fields = {
+        "use_loopholing": getattr(model_args, "use_loopholing", False),
+        "only_mask_tokens": getattr(model_args, "only_mask_tokens", False),
+        "mlp_module": getattr(model_args, "mlp_module", False),
+        "use_cab": getattr(model_args, "use_cab", False),
+        "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
+        "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
+        "read_layers": getattr(model_args, "read_layer", [-1]),
+        "cab_n_heads": getattr(model_args, "cab_n_heads", 8),
+        "cab_n_kv_heads": getattr(model_args, "cab_n_kv_heads", 4),
+        "attention_dropout": getattr(model_args, "attention_dropout", None),
+        "residual_dropout": getattr(model_args, "residual_dropout", None),
+        "embedding_dropout": getattr(model_args, "embedding_dropout", None),
+    }
+    for field_name, value in custom_fields.items():
+        if value is not None:
+            setattr(check_config, field_name, value)
+            
+    try:
+        if is_custom:
+            # We already imported model_cls above
+            print_main(f"ℹ️ Forcing local {model_cls.__name__}. Config: CAB={check_config.use_cab}, Loop={check_config.use_loopholing}")
+            model = model_cls.from_pretrained(base_model_path, config=check_config, **params)
         else:
              model = transformers.AutoModelForMaskedLM.from_pretrained(
                  base_model_path, config=check_config, **params
