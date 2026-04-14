@@ -31,6 +31,19 @@ def is_local_model(path: str) -> bool:
     return any(os.path.exists(os.path.join(path, f)) for f in weight_indicators)
 
 
+def resolve_shadow_path(path: str) -> str:
+    """If a path shadows a Hub repo but is missing weights, return the cache path."""
+    if path and not is_local_model(path) and os.path.isdir(path):
+         print_main(f"ℹ️ Shadowing detected for '{path}'. Forcing Hub cache resolution...")
+         from huggingface_hub import snapshot_download
+         try:
+             # This bypasses the local directory and returns the official HF cache path
+             return snapshot_download(repo_id=path)
+         except Exception as e:
+             print_main(f"⚠️ Failed to resolve Hub path: {e}")
+    return path
+
+
 def get_model(
     model_args: ModelArguments | None = None,
     config: transformers.PretrainedConfig | None = None,
@@ -100,17 +113,8 @@ def get_model(
         "trust_remote_code": True,
     }
 
-    # Shadowing protection & Hub forcing: 
-    # If a directory exists but has no weights, it's shadowing a Hub repo.
-    # We force resolution to the HF cache to bypass the broken local directory.
-    if model_name_or_path and not is_local_model(model_name_or_path) and os.path.isdir(model_name_or_path):
-         print_main(f"ℹ️ Shadowing detected: local directory '{model_name_or_path}' is missing weights. Forcing Hub cache...")
-         from huggingface_hub import snapshot_download
-         try:
-             # Use repo_id to get the real cache path, ignoring the local directory
-             model_name_or_path = snapshot_download(repo_id=model_name_or_path)
-         except Exception as e:
-             print_main(f"⚠️ Failed to resolve Hub path: {e}")
+    # Shadowing protection & Hub forcing
+    model_name_or_path = resolve_shadow_path(model_name_or_path)
 
     # Ensure local paths are recognized as such by transformers (starting with ./ or absolute)
     if model_name_or_path and not model_name_or_path.startswith("/"):
@@ -124,11 +128,7 @@ def get_model(
             is_peft = True
             from peft import PeftConfig
             peft_config = PeftConfig.from_pretrained(model_name_or_path)
-            base_model_path = peft_config.base_model_name_or_path
-            # Check for shadowing on base model path as well
-            if base_model_path and not is_local_model(base_model_path) and os.path.isdir(base_model_path):
-                 from huggingface_hub import snapshot_download
-                 base_model_path = snapshot_download(repo_id=base_model_path)
+            base_model_path = resolve_shadow_path(peft_config.base_model_name_or_path)
             if base_model_path and not base_model_path.startswith("/"):
                 if base_model_path.startswith(".") or is_local_model(base_model_path):
                     base_model_path = os.path.abspath(base_model_path)
@@ -355,9 +355,12 @@ def get_tokenizer(
         "model_name_or_path", getattr(model_args, "model_name_or_path", None)
     )
 
+    # Shadowing protection: ensure tokenizer path also resolves to Hub cache if local is broken
+    model_name_or_path = resolve_shadow_path(model_name_or_path)
+
     # Ensure local path is treated as such by transformers
     if model_name_or_path and not model_name_or_path.startswith("/"):
-        if model_name_or_path.startswith(".") or os.path.isdir(model_name_or_path):
+        if model_name_or_path.startswith(".") or is_local_model(model_name_or_path):
             model_name_or_path = os.path.abspath(model_name_or_path)
 
     # ---------------- Tokenizer loading ----------------
