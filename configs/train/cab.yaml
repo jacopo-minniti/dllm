@@ -16,15 +16,15 @@ training:
   
   cab:
     active: True
-    cab_bottleneck_dim: 1024
-    cab_mlp_expansion_dim: 2048
-    read_layer: [15]
-    only_mask_tokens: True
+    cab_bottleneck_dim: 512
+    cab_mlp_expansion_dim: 1024
+    read_layer: [-1]
+    only_mask_tokens: False
   
   hyperparameters:
-    num_train_epochs: 3
-    learning_rate: 5e-05
-    per_device_train_batch_size: 8
+    num_train_epochs: 1
+    learning_rate: 2e-05
+    per_device_train_batch_size: 4
     gradient_accumulation_steps: 8
     lr_scheduler_type: "linear"
     warmup_ratio: 0.1

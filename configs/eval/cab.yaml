@@ -12,16 +12,16 @@ evaluation:
   # Model Configuration
   model: "llada"
   model_args:
-    pretrained: ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-puma-bptt-cab/lr5e-05_bs256_puma-th0.15_bptt4_cab-b512-e1024-rl15/checkpoint-final"
+    pretrained: "jacopo-minniti/LLaDA-8B-Base-CAB-All"
     dtype: "bfloat16"
     lora: False
     
     # Bridge Intervention (Must match training dims)
     use_cab: True
-    cab_bottleneck_dim: 512   
-    cab_mlp_expansion_dim: 1024
-    read_layer: [15]
-    only_mask_tokens: False
+    cab_bottleneck_dim: 2048   
+    cab_mlp_expansion_dim: 4096
+    read_layer: [15, 30]
+    only_mask_tokens: True
 
     # Inference Memory (Loopholing carries CAB state over steps)
     use_loopholing: True
