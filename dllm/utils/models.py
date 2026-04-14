@@ -100,13 +100,24 @@ def get_model(
         "trust_remote_code": True,
     }
 
-    # Shadowing protection: only treat as local path if weights actually exist.
-    # Otherwise, it might be a Hub repo name shadowing a local empty directory.
+    # Shadowing protection & Hub forcing: 
+    # If a directory exists but has no weights, it's shadowing a Hub repo.
+    # We force resolution to the HF cache to bypass the broken local directory.
+    if model_name_or_path and not is_local_model(model_name_or_path) and os.path.isdir(model_name_or_path):
+         print_main(f"ℹ️ Shadowing detected: local directory '{model_name_or_path}' is missing weights. Forcing Hub cache...")
+         from huggingface_hub import snapshot_download
+         try:
+             # Use repo_id to get the real cache path, ignoring the local directory
+             model_name_or_path = snapshot_download(repo_id=model_name_or_path)
+         except Exception as e:
+             print_main(f"⚠️ Failed to resolve Hub path: {e}")
+
+    # Ensure local paths are recognized as such by transformers (starting with ./ or absolute)
     if model_name_or_path and not model_name_or_path.startswith("/"):
         if model_name_or_path.startswith(".") or is_local_model(model_name_or_path):
              model_name_or_path = os.path.abspath(model_name_or_path)
 
-    # Detect if we are loading a PEFT checkpoint (local only)
+    # Detect if we are loading a PEFT checkpoint (local path with weights only)
     is_peft = False
     if model_name_or_path and is_local_model(model_name_or_path):
         if os.path.exists(os.path.join(model_name_or_path, "adapter_config.json")):
@@ -114,7 +125,10 @@ def get_model(
             from peft import PeftConfig
             peft_config = PeftConfig.from_pretrained(model_name_or_path)
             base_model_path = peft_config.base_model_name_or_path
-            # Shadowing protection for base model path as well
+            # Check for shadowing on base model path as well
+            if base_model_path and not is_local_model(base_model_path) and os.path.isdir(base_model_path):
+                 from huggingface_hub import snapshot_download
+                 base_model_path = snapshot_download(repo_id=base_model_path)
             if base_model_path and not base_model_path.startswith("/"):
                 if base_model_path.startswith(".") or is_local_model(base_model_path):
                     base_model_path = os.path.abspath(base_model_path)
