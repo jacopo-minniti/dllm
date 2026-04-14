@@ -136,6 +136,13 @@ def get_model(
     except Exception:
         pass
 
+    # Fallback: Detect by name if config loading failed or model_type is missing
+    if model_type is None and base_model_path:
+        if "lladamoe" in base_model_path.lower():
+            model_type = "lladamoe"
+        elif "llada" in base_model_path.lower():
+            model_type = "llada"
+
     # Use custom loading logic for LLaDA to bypass AutoModel/AutoConfig registry issues
     if model_type in ["llada", "lladamoe"]:
         is_custom = True
@@ -162,13 +169,15 @@ def get_model(
             ps.wait_for_everyone() 
 
         # Load config directly to bypass AutoConfig resolution bugs
-        check_config = config or config_cls.from_pretrained(base_model_path)
+        try:
+            check_config = config or config_cls.from_pretrained(base_model_path)
+        except Exception:
+            check_config = config
     else:
         # Standard transformers loading
         try:
             # 1. Attempt loading with trust_remote_code=False first.
             # This prioritizes our LOCAL implementations (via the dllm.pipelines import above)
-            # over the Hub's auto_map, preventing crashes if the Hub repo is missing files.
             try:
                  check_config = config or transformers.AutoConfig.from_pretrained(
                      base_model_path, trust_remote_code=False
@@ -183,28 +192,29 @@ def get_model(
             check_config = config
 
     # Propagate all custom settings to the config object strictly
-    custom_fields = {
-        "use_loopholing": getattr(model_args, "use_loopholing", False),
-        "only_mask_tokens": getattr(model_args, "only_mask_tokens", False),
-        "mlp_module": getattr(model_args, "mlp_module", False),
-        "use_cab": getattr(model_args, "use_cab", False),
-        "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
-        "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
-        "read_layers": getattr(model_args, "read_layer", [-1]),
-        "cab_n_heads": getattr(model_args, "cab_n_heads", 8),
-        "cab_n_kv_heads": getattr(model_args, "cab_n_kv_heads", 4),
-        "attention_dropout": getattr(model_args, "attention_dropout", None),
-        "residual_dropout": getattr(model_args, "residual_dropout", None),
-        "embedding_dropout": getattr(model_args, "embedding_dropout", None),
-    }
-    for field_name, value in custom_fields.items():
-        if value is not None:
-            setattr(check_config, field_name, value)
+    if check_config is not None:
+        custom_fields = {
+            "use_loopholing": getattr(model_args, "use_loopholing", False),
+            "only_mask_tokens": getattr(model_args, "only_mask_tokens", False),
+            "mlp_module": getattr(model_args, "mlp_module", False),
+            "use_cab": getattr(model_args, "use_cab", False),
+            "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
+            "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
+            "read_layers": getattr(model_args, "read_layer", [-1]),
+            "cab_n_heads": getattr(model_args, "cab_n_heads", 8),
+            "cab_n_kv_heads": getattr(model_args, "cab_n_kv_heads", 4),
+            "attention_dropout": getattr(model_args, "attention_dropout", None),
+            "residual_dropout": getattr(model_args, "residual_dropout", None),
+            "embedding_dropout": getattr(model_args, "embedding_dropout", None),
+        }
+        for field_name, value in custom_fields.items():
+            if value is not None:
+                setattr(check_config, field_name, value)
             
     try:
-        if is_custom:
+        if is_custom and check_config is not None:
             # We already imported model_cls above
-            print_main(f"ℹ️ Forcing local {model_cls.__name__}. Config: CAB={check_config.use_cab}, Loop={check_config.use_loopholing}")
+            print_main(f"ℹ️ Forcing local {model_cls.__name__}. Config: CAB={getattr(check_config, 'use_cab', 'N/A')}, Loop={getattr(check_config, 'use_loopholing', 'N/A')}")
             model = model_cls.from_pretrained(base_model_path, config=check_config, **params)
         else:
              model = transformers.AutoModelForMaskedLM.from_pretrained(
