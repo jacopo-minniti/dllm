@@ -204,6 +204,9 @@ def seed_everything(seed: int):
     # makes CuDNN / some kernels deterministic (can reduce speed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    
+    # Ensures deterministic cuBLAS matrix multiplication kernels
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
     # Also call transformers.set_seed for its internal logic (like TF if present)
     transformers.set_seed(seed)

@@ -120,9 +120,21 @@ class MDLMEvalHarness(BaseEvalHarness):
         self, batch: torch.Tensor, prompt_index: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Apply forward diffusion process by masking a random subset of target tokens."""
+        # Stable sample-specific seeding for Monte Carlo reproducibility across GPU counts.
+        # We ensure it's not purely a global call which would depend on rank-level iteration state.
         b, l = batch.shape
         target_len = (l - prompt_index.sum()).item()
-        k = torch.randint(1, target_len + 1, (), device=batch.device)
+        
+        # We want k and randperm to be deterministic for this specific (batch, sample) pair.
+        # However, to be robust across ranks, we use torch.Generator with a combined seed.
+        gen = torch.Generator(device=batch.device)
+        # Combine global seed with something from the content to be unique
+        base_seed = torch.initial_seed() % (2**32)
+        # Use a simple hash of the first few tokens as a variety source
+        content_hash = int(batch[0, :min(l, 10)].sum().item()) % (2**32)
+        gen.manual_seed(base_seed ^ content_hash)
+
+        k = torch.randint(1, target_len + 1, (), generator=gen, device=batch.device)
 
         x = torch.round(
             torch.linspace(
@@ -136,7 +148,7 @@ class MDLMEvalHarness(BaseEvalHarness):
         is_mask = indices < x.unsqueeze(1)
 
         for i in range(b):
-            is_mask[i] = is_mask[i][torch.randperm(target_len)]
+            is_mask[i] = is_mask[i][torch.randperm(target_len, generator=gen)]
 
         is_mask = torch.cat(
             (

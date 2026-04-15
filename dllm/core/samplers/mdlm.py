@@ -337,8 +337,10 @@ class MDLMSampler(BaseSampler):
                         if u_j.numel() == 0:
                             continue
                             
-                        # Sort by uncertainty (low to high = high confidence first)
-                        vals, sort_idx = torch.sort(u_j, descending=False)
+                        # Stable sort by uncertainty: add a tiny epsilon based on relative position
+                        # to ensure deterministic tie-breaking even on GPU kernels.
+                        u_j_stable = u_j + torch.linspace(0, 1e-8, u_j.numel(), device=u_j.device)
+                        vals, sort_idx = torch.sort(u_j_stable, descending=False)
                         original_idxs = torch.where(mask_index[j])[0][sort_idx]
                         
                         cum_uncertainty = torch.cumsum(vals, dim=-1)
@@ -352,9 +354,11 @@ class MDLMSampler(BaseSampler):
                         transfer_index[j, to_unmask] = True
                     else:
                         # Fixed budget scheduling (Standard LLaDA)
-                        k = num_transfer_tokens[j, i]
                         if k > 0:
-                            _, select_index = torch.topk(confidence[j], k=k)
+                            # Stable topk: add small epsilon to break ties deterministically
+                            c_j = confidence[j]
+                            c_j_stable = c_j + torch.linspace(0, 1e-8, c_j.numel(), device=c_j.device)
+                            _, select_index = torch.topk(c_j_stable, k=k)
                             transfer_index[j, select_index] = True
 
                 # Commit chosen predictions into the canvas
@@ -622,7 +626,10 @@ class MDLMSampler(BaseSampler):
                 for j in range(B):
                     k = int(num_transfer_tokens[j, s].item())
                     if k > 0:
-                        _, select_idx = torch.topk(confidence[j], k=k)
+                        # Stable topk for infill
+                        c_j = confidence[j]
+                        c_j_stable = c_j + torch.linspace(0, 1e-8, c_j.numel(), device=c_j.device)
+                        _, select_idx = torch.topk(c_j_stable, k=k)
                         transfer_index[j, select_idx] = True
 
                 # Commit selected predictions into the canvas

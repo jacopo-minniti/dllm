@@ -54,6 +54,17 @@ def main():
             run_cfg = {}
     if "evaluation" in run_cfg:
         run_cfg["evaluation"] = flatten_config_dict(run_cfg["evaluation"])
+
+    evaluation = run_cfg.get("evaluation", {})
+    if "seed" not in evaluation: evaluation["seed"] = 42
+    seed = evaluation["seed"]
+
+    # 0. Set local environment for the launcher process
+    os.environ["HF_HOME"] = os.path.abspath(".cache")
+    os.environ["HF_DATASETS_CACHE"] = os.path.abspath(".cache/datasets")
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    os.makedirs(os.environ["HF_HOME"], exist_ok=True)
     with open(args.slurm_config, 'r') as f:
         try:
             slurm_cfg = yaml.safe_load(f) or {}
@@ -103,24 +114,23 @@ def main():
         f"export WANDB_RUN_GROUP=\"{wb.get('group', 'evals')}\"",
         f"export WANDB_TAGS=\"{wb.get('tags', '').replace(',', '|')}\"", # Use pipe as a safe intermediate
         "export PYTHONUNBUFFERED=1",
-        "export NCCL_DEBUG=INFO", 
-        "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
+        f"export PYTHONHASHSEED={seed}",
+        "export CUBLAS_WORKSPACE_CONFIG=:4096:8",
         "export HF_HOME=\"$PWD/.cache\"",
         "export HF_DATASETS_CACHE=\"$PWD/.cache/datasets\"",
         "export HF_DATASETS_OFFLINE=0",
         "export TRANSFORMERS_OFFLINE=0",
         "export HF_HUB_OFFLINE=0",
-        "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=43200",
-        "export ACCELERATE_TIMEOUT_IN_SECONDS=43200",
-        "export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=43200",
-        "export TORCH_NCCL_TRACE_BUFFER_SIZE=2000000",
-        "export TORCH_CPP_LOG_LEVEL=INFO",
-        "export NCCL_DEBUG=INFO"
+        "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=3600", # Reverted to 1h for eval stability
+        "export ACCELERATE_TIMEOUT_IN_SECONDS=3600",
+        "export NCCL_DEBUG=WARN", # Reduced from INFO
+        "export TORCH_CPP_LOG_LEVEL=ERROR", # Reduced from INFO
+        "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
     ]
     
     # 3b. Automatic Naming and Directory Construction
     if "seed" not in evaluation: evaluation["seed"] = 42
-    if "distributed_timeout" not in evaluation: evaluation["distributed_timeout"] = 43200
+    if "distributed_timeout" not in evaluation: evaluation["distributed_timeout"] = 3600
     
     # Extract model_args and handle CLI overrides
     model_args = evaluation.get("model_args", {})
@@ -159,8 +169,7 @@ def main():
         evaluation["cache_requests"] = True
 
     # ── Seed and Distributed Defaults ─────────────────────────
-    if "seed" not in evaluation: evaluation["seed"] = 42
-    if "distributed_timeout" not in evaluation: evaluation.setdefault("distributed_timeout", 43200)
+    if "distributed_timeout" not in evaluation: evaluation.setdefault("distributed_timeout", 3600)
 
     seed = evaluation.get("seed", 42)
     eval_flags = [f"--seed {seed}"]
@@ -222,6 +231,12 @@ elif [ -f "./.venv/bin/activate" ]; then
 else
     echo "Warning: Could not find .venv/bin/activate"
 fi
+
+set -a
+[ -f .env ] && . ./.env
+set +a
+
+# ===== Exports =====
 
 {chr(10).join(env_exports)}
 

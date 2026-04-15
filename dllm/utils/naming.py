@@ -241,11 +241,17 @@ def get_eval_naming(evaluation_cfg):
     params_slug = "_".join(eval_parts) if eval_parts else "default"
     
     # 4. Final Output Path
-    # Structure: <checkpoint_dir>/evals/<params_slug>/<task_slug>.jsonl
-    # This avoids duplication nesting (task/task) since lm-eval-harness
-    # appends the task name to the output_path directory.
+    # Structure: .models/<model_dir>/evals/<params_slug>/<task_slug>.jsonl
+    # This adheres to our rule of using .models for all artifacts.
     pretrained_raw = str(model_args.get("pretrained", "model"))
-    base_eval_dir = os.path.join(pretrained_raw, "evals", params_slug)
+    
+    # Ensure it starts with .models/
+    if not pretrained_raw.startswith(".models/"):
+        model_root = os.path.join(".models", pretrained_raw.replace("/", "__"))
+    else:
+        model_root = pretrained_raw
+        
+    base_eval_dir = os.path.join(model_root, "evals", params_slug)
     output_path = os.path.join(base_eval_dir, f"{task_slug}.jsonl")
     
     return task_slug, model_slug, checkpoint_name, params_slug, output_path
