@@ -59,17 +59,33 @@ def resolve_keywords(config: Any, keyword_map: Dict[str, Any]) -> Any:
             
             # 1. Handle Categorical Shortcuts (e.g., cab_size: medium)
             shortcuts = keyword_map.get("shortcuts", {})
-            if k in shortcuts and v in shortcuts[k]:
-                expansion = shortcuts[k][v]
-                if isinstance(expansion, dict):
-                    # Merge expanded params into the current level
-                    for exp_k, exp_v in expansion.items():
-                        new_dict[exp_k] = exp_v
-                else:
-                    new_dict[k] = expansion
-            
+            if k in shortcuts:
+                if isinstance(v, list) and len(v) > 0:
+                    # Multi-value shortcut (Matrix)
+                    # Resolve one element to identify the target parameters
+                    first_res = resolve_keywords({k: v[0]}, keyword_map)
+                    for target_k in first_res.keys():
+                        new_dict[target_k] = [resolve_keywords({k: item}, keyword_map).get(target_k) for item in v]
+                    idx += 1
+                    continue
+                
+                # Single-value shortcut
+                if not isinstance(v, (dict, list)):
+                    try:
+                        if v in shortcuts[k]:
+                            expansion = shortcuts[k][v]
+                            if isinstance(expansion, dict):
+                                for exp_k, exp_v in expansion.items():
+                                    new_dict[exp_k] = exp_v
+                            else:
+                                new_dict[k] = expansion
+                            idx += 1
+                            continue
+                    except TypeError:
+                        pass
+
             # 2. Handle Layers (base 1 to base 0 conversion)
-            elif k in ["read_layers", "read_layer"] and v is not None:
+            if k in ["read_layers", "read_layer"] and v is not None:
                 # If they provide something like [1, 2], we convert to [0, 1]
                 if isinstance(v, list):
                     new_dict[k] = [(x - 1 if isinstance(x, int) else x) for x in v]
@@ -78,7 +94,7 @@ def resolve_keywords(config: Any, keyword_map: Dict[str, Any]) -> Any:
                 else:
                     new_dict[k] = v
             
-            # 3. Handle list-based matrix shorthand (ensure nested resolution)
+            # 3. Handle standard list-based matrix shorthand (nested resolution)
             elif isinstance(v, list):
                 new_dict[k] = [resolve_keywords(x, keyword_map) for x in v]
             
@@ -114,10 +130,18 @@ def expand_matrix_config(config: Dict[str, Any]) -> Generator[Dict[str, Any], No
         if isinstance(obj, dict):
             for k, v in obj.items():
                 find_lists(v, path + [k])
-        elif isinstance(obj, list) and len(obj) > 0 and not all(isinstance(x, (dict, list)) for x in obj):
-            # It's a list of values (potential matrix dimension)
-            # We exclude lists of dicts (like LoRA target modules) unless specified
-            # but usually hyperparameters are simple lists [1e-5, 2e-5]
+        elif isinstance(obj, list) and len(obj) > 1:
+            # We treat a list as a matrix dimension if it has more than 1 element
+            # UNLESS it is specifically nested, e.g. [[1, 2]] means a single job with [1,2].
+            
+            # Special case: If it's a list of lists where every sub-list has 1 element, OR if it's a list of numbers.
+            # To sweep over multiple layers together, use: read_layers: [[15, 16], [30, 31]]
+            # To use multiple layers in a single job without expansion, use: read_layers: [[15, 16]]
+            
+            # If the first element is a list, and the whole list has length 1, it's a 'locked' value.
+            if len(obj) == 1 and isinstance(obj[0], list):
+                return
+                
             flat_lists.append({"path": path, "values": obj})
 
     find_lists(config)
