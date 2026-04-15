@@ -1,19 +1,9 @@
 training:
-  core:
-    model_name_or_path: llada-8b
-    loss_type: "puma_bptt"
-  
-  puma: { active: True }
+  mode: loophole_bptt
   bptt: 2
-
-  loophole:
-    active: True
-    read_layers: 16 # base 1
-    injection: masked
-    mlp_module: True
-  
-  hyperparameters:
-    max_steps: 500
-    learning_rate: 2e-05
-  
+  read_layers: 16 # base 1
+  injection: masked
+  mlp_module: True
   dataset: tulu
+  max_steps: 500
+  learning_rate: 2e-05

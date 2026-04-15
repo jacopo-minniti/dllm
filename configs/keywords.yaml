@@ -12,6 +12,45 @@ models:
 # Shortcuts: When these keys are found in your YAML, they are expanded
 # into the specified set of parameters.
 shortcuts:
+  # Mode Shortcuts (Controls multiple intervention flags and loss_type)
+  mode:
+    base:
+      use_puma: False
+      use_bptt: False
+      use_loopholing: False
+      use_cab: False
+      loss_type: "mlm"
+    puma:
+      use_puma: True
+      use_bptt: False
+      use_loopholing: False
+      use_cab: False
+      loss_type: "puma"
+    puma_bptt:
+      use_puma: True
+      use_bptt: True
+      use_loopholing: False
+      use_cab: False
+      loss_type: "puma_bptt"
+    loophole:
+      use_puma: True
+      use_loopholing: True
+      use_bptt: False
+      use_cab: False
+      loss_type: "puma"
+    loophole_bptt:
+      use_puma: True
+      use_loopholing: True
+      use_bptt: True
+      use_cab: False
+      loss_type: "puma_bptt"
+    cab_all:
+      use_puma: True
+      use_cab: True
+      use_bptt: True
+      use_loopholing: False
+      loss_type: "puma_bptt"
+
   epochs:
     small:  { num_train_epochs: 1 }
     medium: { num_train_epochs: 2 }
@@ -30,7 +69,6 @@ shortcuts:
     all:    { only_mask_tokens: False }
     masked: { only_mask_tokens: True }
 
-  # BPTT steps is direct assignment
   bptt:
     1: { bptt_steps: 1 }
     2: { bptt_steps: 2 }

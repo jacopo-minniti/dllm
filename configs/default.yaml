@@ -3,6 +3,7 @@
 
 training:
   core:
+    model_name_or_path: llada-8b
     bf16: True
     gradient_checkpointing: True
     seed: 42
@@ -11,10 +12,9 @@ training:
     distributed_timeout: 43200
   
   hyperparameters:
-    num_train_epochs: -1
-    max_steps: 1000
+    num_train_epochs: 1
     learning_rate: 2e-05
-    per_device_train_batch_size: 4
+    per_device_train_batch_size: 8
     gradient_accumulation_steps: 8
     lr_scheduler_type: "linear"
     warmup_ratio: 0.1

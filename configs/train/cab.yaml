@@ -1,19 +1,9 @@
 training:
-  core:
-    model_name_or_path: llada-8b
-    loss_type: "puma_bptt"
-  
-  puma: { active: True }
+  mode: cab_all
   bptt: 2
-
-  cab:
-    active: True
-    cab_size: small
-    read_layer: [-1]
-    injection: all
-  
-  hyperparameters:
-    max_steps: 500
-    learning_rate: 2e-05
-  
+  cab_size: small
+  read_layers: -1
+  injection: all
   dataset: tulu
+  max_steps: 500
+  learning_rate: 2e-05
