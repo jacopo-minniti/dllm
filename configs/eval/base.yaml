@@ -12,7 +12,7 @@ evaluation:
   # Model Configuration
   model: "llada"
   model_args:
-    pretrained: ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base/lr2e-05_bs128/checkpoint-final" # "GSAI-ML/LLaDA-8B-Base"
+    pretrained: "GSAI-ML/LLaDA-8B-Base"
     dtype: "bfloat16"
     
     # Interventions (Disabled)

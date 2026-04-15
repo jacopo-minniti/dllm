@@ -8,13 +8,17 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 from dotenv import load_dotenv
+import argparse
 
 load_dotenv()
 
 # =====================================================================
 # CONFIGURATION
 # =====================================================================
-DATA_PATH = ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-puma-bptt-cab/lr5e-05_bs256_puma-th0.15_bptt4_cab-b512-e1024-rl15/checkpoint-final/evals/mnt512_s256_bs32_t0.0_th0.15_loop_nf4/.models__LLaDA-8B-Base__tulu-3-sft-mixture__base-puma-bptt-cab__lr5e-05_bs256_puma-th0.15_bptt4_cab-b512-e1024-rl15__checkpoint-final/samples_math500_reasoning_2026-04-11T21-23-25.222241.jsonl"
+parser = argparse.ArgumentParser()
+parser.add_argument("data_path")
+args = parser.parse_args()
+DATA_PATH = args.data_path
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL_ID = "gemini-3.1-flash-lite-preview"
 
