@@ -37,6 +37,7 @@ def main():
     parser.add_argument("--accelerate_config", default="ddp", help="Name of accelerate config (located in configs/accelerate/)")
     parser.add_argument("--job_name", default="dllm", help="Slurm job name")
     parser.add_argument("--begin", help="Time to start the job (Slurm format, e.g. now+2hours)")
+    parser.add_argument("--after", help="Slurm job ID to wait for (uses --dependency=afterok:<id>)")
     
     # Collect remaining args to pass directly to the eval script
     args, extra_args = parser.parse_known_args()
@@ -285,6 +286,9 @@ srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" \\
     sbatch_cmd = ["sbatch"]
     if args.begin:
         sbatch_cmd.extend(["--begin", args.begin])
+    if args.after:
+        sbatch_cmd.extend(["--dependency", f"afterok:{args.after}"])
+        print(f"🔗 Setting job dependency: wait for {args.after} to complete successfully.")
     sbatch_cmd.append(temp_script)
     
     result = subprocess.run(sbatch_cmd)
