@@ -1,0 +1,149 @@
+import os
+import yaml
+import copy
+from typing import Any, Dict, List, Generator
+
+def deep_merge(target: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively merges source dict into target dict."""
+    for k, v in source.items():
+        if isinstance(v, dict) and k in target and isinstance(target[k], dict):
+            deep_merge(target[k], v)
+        else:
+            target[k] = copy.deepcopy(v)
+    return target
+
+def load_resolved_config(path: str, base_dir: str, default_filename: str = "default.yaml") -> Dict[str, Any]:
+    """
+    Loads a config, merges it with the base default.yaml if it exists.
+    """
+    # 1. Load Defaults
+    default_path = os.path.join(base_dir, default_filename)
+    merged_cfg = {}
+    if os.path.exists(default_path):
+        with open(default_path, "r") as f:
+            merged_cfg = yaml.safe_load(f) or {}
+    
+    # 2. Load User Config
+    # Check if path exists as-is (e.g. if user passed the full path)
+    actual_path = path
+    if not os.path.exists(actual_path):
+        # Try relative to base_dir
+        actual_path = os.path.join(base_dir, path)
+    
+    # Try adding .yaml extension
+    if not os.path.exists(actual_path) and not actual_path.endswith(".yaml"):
+        if os.path.exists(actual_path + ".yaml"):
+            actual_path += ".yaml"
+    
+    if os.path.exists(actual_path):
+        with open(actual_path, "r") as f:
+            user_cfg = yaml.safe_load(f) or {}
+        merged_cfg = deep_merge(merged_cfg, user_cfg)
+    else:
+        # If still not found, we don't error but it will just be the defaults
+        print(f"⚠️ Warning: Configuration file not found at {path} or {actual_path}")
+    
+    return merged_cfg
+
+def resolve_keywords(config: Any, keyword_map: Dict[str, Any]) -> Any:
+    """
+    Recursively replaces keyword strings and expands shortcuts into multiple parameters.
+    """
+    if isinstance(config, dict):
+        new_dict = {}
+        # We use a copy of the items to avoid modification issues
+        items = list(config.items())
+        idx = 0
+        while idx < len(items):
+            k, v = items[idx]
+            
+            # 1. Handle Categorical Shortcuts (e.g., cab_size: medium)
+            shortcuts = keyword_map.get("shortcuts", {})
+            if k in shortcuts and v in shortcuts[k]:
+                expansion = shortcuts[k][v]
+                if isinstance(expansion, dict):
+                    # Merge expanded params into the current level
+                    for exp_k, exp_v in expansion.items():
+                        new_dict[exp_k] = exp_v
+                else:
+                    new_dict[k] = expansion
+            
+            # 2. Handle Layers (base 1 to base 0 conversion)
+            elif k in ["read_layers", "read_layer"] and v is not None:
+                # If they provide something like [1, 2], we convert to [0, 1]
+                if isinstance(v, list):
+                    new_dict[k] = [(x - 1 if isinstance(x, int) else x) for x in v]
+                elif isinstance(v, int):
+                    new_dict[k] = v - 1
+                else:
+                    new_dict[k] = v
+            
+            # 3. Handle list-based matrix shorthand (ensure nested resolution)
+            elif isinstance(v, list):
+                new_dict[k] = [resolve_keywords(x, keyword_map) for x in v]
+            
+            # 4. Standard recursive resolution
+            else:
+                new_dict[k] = resolve_keywords(v, keyword_map)
+            
+            idx += 1
+        return new_dict
+
+    elif isinstance(config, list):
+        return [resolve_keywords(v, keyword_map) for v in config]
+
+    elif isinstance(config, str):
+        # Check for direct matches in keywords.yaml datasets/models
+        if config in keyword_map.get("datasets", {}):
+            return keyword_map["datasets"][config]
+        if config in keyword_map.get("models", {}):
+            return keyword_map["models"][config]
+        
+    return config
+
+def expand_matrix_config(config: Dict[str, Any]) -> Generator[Dict[str, Any], None, None]:
+    """
+    Finds lists in the config and explodes them into multiple 'concrete' configs.
+    Uses Zipped iteration (parallel lists must have same length).
+    """
+    # 1. Flatten to find all list values and their paths
+    flat_lists = []
+    
+    def find_lists(obj, path=None):
+        path = path or []
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                find_lists(v, path + [k])
+        elif isinstance(obj, list) and len(obj) > 0 and not all(isinstance(x, (dict, list)) for x in obj):
+            # It's a list of values (potential matrix dimension)
+            # We exclude lists of dicts (like LoRA target modules) unless specified
+            # but usually hyperparameters are simple lists [1e-5, 2e-5]
+            flat_lists.append({"path": path, "values": obj})
+
+    find_lists(config)
+    
+    if not flat_lists:
+        yield config
+        return
+    
+    # 2. Validate lengths
+    lengths = [len(x["values"]) for x in flat_lists]
+    max_len = max(lengths)
+    for x in flat_lists:
+        if len(x["values"]) != max_len and len(x["values"]) != 1:
+            raise ValueError(
+                f"Matrix dimension mismatch at {'.'.join(x['path'])}. "
+                f"Expected length {max_len} or 1, got {len(x['values'])}"
+            )
+    
+    # 3. Yield exploded configs
+    for i in range(max_len):
+        new_cfg = copy.deepcopy(config)
+        for x in flat_lists:
+            val = x["values"][i] if len(x["values"]) == max_len else x["values"][0]
+            # Navigate to path and set value
+            curr = new_cfg
+            for step in x["path"][:-1]:
+                curr = curr[step]
+            curr[x["path"][-1]] = val
+        yield new_cfg

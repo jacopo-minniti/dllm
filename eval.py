@@ -3,7 +3,9 @@ import yaml
 import subprocess
 import os
 import sys
+import copy
 from dllm.utils.naming import get_eval_naming, flatten_config_dict
+from dllm.utils.config import load_resolved_config, resolve_keywords, expand_matrix_config
 
 def dict_to_arg_str(d, sep=","):
     """Convert dict to 'key=val,key2=val2' format."""
@@ -35,283 +37,189 @@ def main():
     parser.add_argument("run_config", help="Name or path of evaluation configuration")
     parser.add_argument("--slurm_config", required=True, help="Name or path of Slurm resource configuration")
     parser.add_argument("--accelerate_config", default="ddp", help="Name of accelerate config (located in configs/accelerate/)")
-    parser.add_argument("--job_name", default="dllm", help="Slurm job name")
+    parser.add_argument("--job_name", default="dllm_eval", help="Slurm job name")
     parser.add_argument("--begin", help="Time to start the job (Slurm format, e.g. now+2hours)")
     parser.add_argument("--after", help="Slurm job ID to wait for (uses --dependency=afterok:<id>)")
+    parser.add_argument("--dry_run", action="store_true", help="Generate scripts but do not submit jobs")
     
     # Collect remaining args to pass directly to the eval script
     args, extra_args = parser.parse_known_args()
 
-    # Resolve paths
-    args.run_config = resolve_config_path(args.run_config, "configs/eval")
-    args.slurm_config = resolve_config_path(args.slurm_config, "configs/slurm")
+    # 0. Load Keywords
+    keyword_map = {}
+    if os.path.exists("configs/keywords.yaml"):
+        with open("configs/keywords.yaml", "r") as f:
+            keyword_map = yaml.safe_load(f) or {}
 
-    # 1. Load YAML Configurations
-    with open(args.run_config, 'r') as f:
-        try:
-            run_cfg = yaml.safe_load(f) or {}
-        except yaml.YAMLError:
-            run_cfg = {}
-    if "evaluation" in run_cfg:
-        run_cfg["evaluation"] = flatten_config_dict(run_cfg["evaluation"])
+    # 1. Load Slurm Config (Shared)
+    slurm_path = resolve_config_path(args.slurm_config, "configs/slurm")
+    with open(slurm_path, 'r') as f:
+        slurm_cfg_base = yaml.safe_load(f) or {}
+    slurm_cfg_base["job_name"] = args.job_name
 
-    evaluation = run_cfg.get("evaluation", {})
-    if "seed" not in evaluation: evaluation["seed"] = 42
-    seed = evaluation["seed"]
-
-    # 0. Set local environment for the launcher process
-    os.environ["HF_HOME"] = os.path.abspath(".cache")
-    os.environ["HF_DATASETS_CACHE"] = os.path.abspath(".cache/datasets")
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-    os.makedirs(os.environ["HF_HOME"], exist_ok=True)
-    with open(args.slurm_config, 'r') as f:
-        try:
-            slurm_cfg = yaml.safe_load(f) or {}
-        except yaml.YAMLError:
-            slurm_cfg = {}
+    # 2. Load and Resolve Evaluation Config(s)
+    base_run_cfg = load_resolved_config(args.run_config, "configs/eval", "../default.yaml")
+    if "evaluation" in base_run_cfg:
+        base_run_cfg["evaluation"] = flatten_config_dict(base_run_cfg["evaluation"])
     
-    # 1a. Set default job name or override from CLI
-    slurm_cfg["job_name"] = args.job_name
+    # Resolve keywords (e.g. math -> full dataset string)
+    base_run_cfg = resolve_keywords(base_run_cfg, keyword_map)
 
-    # 2. Extract Slurm Directives
-    slurm_directives = ["#!/bin/bash"]
-    sbatch_map = {
-        "job_name": "--job-name",
-        "nodes": "--nodes",
-        "gpus_per_node": "--gpus-per-node",
-        "time": "--time",
-        "mem": "--mem",
-        "cpus_per_task": "--cpus-per-task",
-        "ntasks_per_node": "--ntasks-per-node",
-        "partition": "--partition",
-        "output": "--output",
-        "error": "--error",
-        "requeue": "--requeue",
-        "working_dir": "--chdir",
-        "account": "--account"
-    }
-    for k, v in slurm_cfg.items():
-        if k in sbatch_map:
-            flag = sbatch_map[k]
-            if v is True:
-                slurm_directives.append(f"#SBATCH {flag}")
-            elif v is False:
-                continue
+    # 3. CLI Overwrites
+    i = 0
+    while i < len(extra_args):
+        arg = extra_args[i]
+        if arg.startswith("--slurm.") or arg.startswith("--evaluation."):
+            if "=" in arg:
+                key_full, val = arg.split("=", 1)
             else:
-                if flag.startswith("--"):
-                    slurm_directives.append(f"#SBATCH {flag}={v}")
+                key_full = arg
+                val = extra_args[i+1] if i+1 < len(extra_args) else True
+                i += 1
+            prefix, key = key_full.lstrip("-").split(".", 1)
+            if prefix == "slurm":
+                slurm_cfg_base[key] = val
+            elif prefix == "evaluation":
+                if "evaluation" not in base_run_cfg: base_run_cfg["evaluation"] = {}
+                base_run_cfg["evaluation"][key] = val
+        i += 1
+
+    # 4. Expand Matrix
+    try:
+        exp_configs = list(expand_matrix_config(base_run_cfg))
+    except ValueError as e:
+        print(f"❌ Configuration Matrix Error: {e}")
+        sys.exit(1)
+        
+    print(f"🧪 Found {len(exp_configs)} evaluation(s) in the matrix configuration.")
+
+    for idx, run_cfg in enumerate(exp_configs):
+        slurm_cfg = copy.deepcopy(slurm_cfg_base)
+        evaluation = run_cfg.get("evaluation", {})
+        
+        # Distinguish job name if matrix
+        if len(exp_configs) > 1:
+            slurm_cfg["job_name"] = f"{slurm_cfg['job_name']}_{idx}"
+
+        # 4b. Slurm Directives
+        slurm_directives = ["#!/bin/bash"]
+        sbatch_map = {
+            "job_name": "--job-name",
+            "nodes": "--nodes",
+            "gpus_per_node": "--gpus-per-node",
+            "time": "--time",
+            "mem": "--mem",
+            "cpus_per_task": "--cpus-per-task",
+            "ntasks_per_node": "--ntasks-per-node",
+            "partition": "--partition",
+            "output": "--output",
+            "error": "--error",
+            "requeue": "--requeue",
+            "working_dir": "--chdir",
+            "account": "--account"
+        }
+        for k, v in slurm_cfg.items():
+            if k in sbatch_map:
+                flag = sbatch_map[k]
+                if v is True: slurm_directives.append(f"#SBATCH {flag}")
+                elif v is False: continue
                 else:
-                    slurm_directives.append(f"#SBATCH {flag} {v}")
+                    if flag.startswith("--"): slurm_directives.append(f"#SBATCH {flag}={v}")
+                    else: slurm_directives.append(f"#SBATCH {flag} {v}")
+        if args.after:
+            slurm_directives.append(f"#SBATCH --dependency=afterok:{args.after}")
+        if args.begin:
+             slurm_directives.append(f"#SBATCH --begin={args.begin}")
 
-    # 3. Setup WandB and Environment Variables
-    evaluation = run_cfg.get("evaluation", {})
-    script_path = evaluation.pop("script_path", "dllm/pipelines/llada/eval.py")
-    
-    wb = evaluation.pop("wandb_args", {})
-    env_exports = [
-        f"export WANDB_NAME=\"{wb.get('name', 'eval')}\"",
-        f"export WANDB_RUN_GROUP=\"{wb.get('group', 'evals')}\"",
-        f"export WANDB_TAGS=\"{wb.get('tags', '').replace(',', '|')}\"", # Use pipe as a safe intermediate
-        "export PYTHONUNBUFFERED=1",
-        f"export PYTHONHASHSEED={seed}",
-        "export CUBLAS_WORKSPACE_CONFIG=:4096:8",
-        "export HF_HOME=\"$PWD/.cache\"",
-        "export HF_DATASETS_CACHE=\"$PWD/.cache/datasets\"",
-        "export HF_DATASETS_OFFLINE=0",
-        "export TRANSFORMERS_OFFLINE=0",
-        "export HF_HUB_OFFLINE=0",
-        "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=3600", # Reverted to 1h for eval stability
-        "export ACCELERATE_TIMEOUT_IN_SECONDS=3600",
-        "export NCCL_DEBUG=WARN", # Reduced from INFO
-        "export TORCH_CPP_LOG_LEVEL=ERROR", # Reduced from INFO
-        "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
-    ]
-    
-    # 3b. Automatic Naming and Directory Construction
-    if "seed" not in evaluation: evaluation["seed"] = 42
-    if "distributed_timeout" not in evaluation: evaluation["distributed_timeout"] = 3600
-    
-    # Extract model_args and handle CLI overrides
-    model_args = evaluation.get("model_args", {})
-    for arg in extra_args:
-        if "--model_args" in arg:
-            arg_content = arg.split("--model_args")[-1].strip().strip("\"'")
-            for kv in arg_content.split(","):
-                if "=" in kv:
-                    k, v = kv.split("=", 1)
-                    model_args[k.strip()] = v.strip()
+        # 4c. Setup Environment Variables
+        if "seed" not in evaluation: evaluation["seed"] = 42
+        seed = evaluation["seed"]
+        
+        wb = evaluation.get("wandb_args", {})
+        env_exports = [
+            f"export WANDB_NAME=\"{wb.get('name', 'eval')}\"",
+            f"export WANDB_RUN_GROUP=\"{wb.get('group', 'evals')}\"",
+            f"export WANDB_PROJECT=\"{os.getenv('WANDB_PROJECT', 'BPTT-llada')}\"",
+            f"export PYTHONHASHSEED={seed}",
+            "export CUBLAS_WORKSPACE_CONFIG=:4096:8",
+            "export HF_HOME=\"$PWD/.cache\"",
+            "export HF_DATASETS_CACHE=\"$PWD/.cache/datasets\"",
+            "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=3600",
+            "export ACCELERATE_TIMEOUT_IN_SECONDS=3600",
+        ]
 
-    evaluation["model_args"] = model_args
-    task_slug, model_slug, checkpoint_name, params_slug, output_path = get_eval_naming(evaluation)
-    
-    # ── Results Storage ───────────────────────────────────────
-    # We use the parent directory of the final output file as the base for results
-    # and the cache database.
-    output_base = os.path.dirname(output_path)
-    evaluation["output_path"] = output_base
-    
-    print(f"📦 Model: {model_slug} ({checkpoint_name})")
-    print(f"📦 Task: {task_slug}")
-    print(f"📦 Params: {params_slug}")
-    print(f"📦 Output: {output_path}")
+        # 4d. Prepare eval flags
+        script_path = evaluation.pop("script_path", "dllm/pipelines/llada/eval.py")
+        model_args = evaluation.get("model_args", {})
+        
+        # Handle manual model_args overrides from command line if any
+        for arg in extra_args:
+             if "--model_args" in arg:
+                arg_content = arg.split("--model_args")[-1].strip().strip("\"'")
+                for kv in arg_content.split(","):
+                    if "=" in kv:
+                        k, v = kv.split("=", 1)
+                        model_args[k.strip()] = v.strip()
+        evaluation["model_args"] = model_args
+        
+        task_slug, model_slug, checkpoint_name, params_slug, output_path = get_eval_naming(evaluation)
+        
+        eval_flags = []
+        for k, v in evaluation.items():
+            if k == "model_args":
+                eval_flags.append(f"--model_args \"{dict_to_arg_str(v)}\"")
+            elif v is True: eval_flags.append(f"--{k}")
+            elif v is False or v is None: continue
+            else: eval_flags.append(f"--{k} {v}")
+        
+        # Finish exports with run-specific naming info
+        env_exports.append(f"export WANDB_TAGS=\"{model_slug}|{task_slug}|{params_slug}\"")
 
-    # ── Caching and Persistence ──────────────────────────────
-    # 1. Model Response Cache: Unique per task/model/params to allow resumption
-    if "use_cache" not in evaluation:
-        cache_dir = os.path.join(output_base, "cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        # Prefix for the SQLite shard database (lm-eval appends _rankX.db)
-        evaluation["use_cache"] = os.path.join(cache_dir, "results")
-    
-    # 2. Request Cache: Speed up prompt building across runs
-    if "cache_requests" not in evaluation:
-        evaluation["cache_requests"] = True
-
-    # ── Seed and Distributed Defaults ─────────────────────────
-    if "distributed_timeout" not in evaluation: evaluation.setdefault("distributed_timeout", 3600)
-
-    seed = evaluation.get("seed", 42)
-    eval_flags = [f"--seed {seed}"]
-    
-    # Handle remaining dict-based args (model_args, gen_kwargs)
-    # Re-inject updated model_args back into evaluation if needed
-    evaluation["model_args"] = model_args
-    for key in ["model_args", "gen_kwargs"]:
-        val = evaluation.pop(key, None)
-        if val:
-            if isinstance(val, dict):
-                val_str = dict_to_arg_str(val)
-                eval_flags.append(f"--{key} \"{val_str}\"")
-            else:
-                eval_flags.append(f"--{key} \"{val}\"")
-                
-    # Default: force samples to stdout via write_out for the .out log
-    if "write_out" not in evaluation:
-        eval_flags.append("--write_out")
-
-    # Add remaining flags
-    for k, v in evaluation.items():
-        if isinstance(v, bool):
-            if v:
-                eval_flags.append(f"--{k}")
-        elif v is not None:
-            eval_flags.append(f"--{k}")
-            eval_flags.append(str(v))
-    
-    eval_flags.extend(extra_args)
-
-    # Handle accelerate config path
-    acc_config = args.accelerate_config
-    if not acc_config.endswith(".yaml"):
-        acc_config = f"configs/accelerate/{acc_config}.yaml"
-
-    # Get working directory
-    working_dir = slurm_cfg.get("working_dir", os.getcwd())
-
-    eval_flags_escaped = [f.replace('"', '\\"') for f in eval_flags]
-    
-    # 4. Generate the Slurm Bash Script
-    bash_script = f"""{chr(10).join(slurm_directives)}
+        # 4f. Generate Script
+        acc_config = args.accelerate_config
+        if not acc_config.endswith(".yaml"):
+            acc_config = f"configs/accelerate/{acc_config}.yaml"
+        working_dir = slurm_cfg.get("working_dir", os.getcwd())
+        
+        slurm_header = "\n".join(slurm_directives)
+        eval_args_str = " ".join(eval_flags)
+        env_exports_str = "\n".join(env_exports)
+        
+        bash_script = f"""{slurm_header}
 set -e
-
-# ===== System Environment =====
-echo "Running from: $(pwd)"
 cd {working_dir}
-echo "Switched to: $(pwd)"
-
-module load StdEnv/2023 python/3.11.5 cuda/12.6 cudnn
-module load gcc opencv arrow
-
-# Activate virtualenv
-if [ -f "{working_dir}/.venv/bin/activate" ]; then
-    source "{working_dir}/.venv/bin/activate"
-elif [ -f "./.venv/bin/activate" ]; then
-    source "./.venv/bin/activate"
-else
-    echo "Warning: Could not find .venv/bin/activate"
-fi
-
+module load StdEnv/2023 python/3.11.5 cuda/12.6 cudnn gcc opencv arrow
+[ -f .venv/bin/activate ] && source .venv/bin/activate
 set -a
 [ -f .env ] && . ./.env
 set +a
+{env_exports_str}
 
-# ===== Exports =====
-
-{chr(10).join(env_exports)}
-
-# ===== Scale Calculation =====
-# Evaluation is forced to 1 node for stability
-NUM_NODES=1
-if [ -n "$SLURM_GPUS_ON_NODE" ]; then
-    GPUS_PER_NODE=$(echo "$SLURM_GPUS_ON_NODE" | grep -oE '[0-9]+' | head -n 1)
-elif [ -n "$CUDA_VISIBLE_DEVICES" ]; then
-    GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\\n' | grep -v '^$' | wc -l)
-else
-    if command -v nvidia-smi &> /dev/null; then
-        GPUS_PER_NODE=$(nvidia-smi -L | wc -l)
-    else
-        GPUS_PER_NODE=1
-    fi
-fi
-GPUS_PER_NODE=${{GPUS_PER_NODE:-1}}
-WORLD_SIZE=$((NUM_NODES * GPUS_PER_NODE))
-
-# Get the master node name and resolve it to an IP
-MASTER_NAME=$(scontrol show hostnames "${{SLURM_JOB_NODELIST:-localhost}}" | head -n 1)
-
-if [ -z "$SLURM_JOB_ID" ]; then
-    MASTER_ADDR="localhost"
-    MASTER_PORT=29500
-    SLURM_PROCID=0
-else
-    MASTER_ADDR=$MASTER_NAME
-    MASTER_PORT=$((20000 + ${{SLURM_JOB_ID:-0}} % 10000))
-fi
-
-echo "🚀 Evaluation Scale: NUM_NODES=$NUM_NODES, GPUS_PER_NODE=$GPUS_PER_NODE, WORLD_SIZE=$WORLD_SIZE"
-
-# ===== Execution =====
-# Dynamically build accelerate launch arguments
+WORLD_SIZE=$((${{SLURM_NNODES:-1}} * ${{SLURM_GPUS_ON_NODE:-1}}))
 LAUNCH_ARGS="--num_processes $WORLD_SIZE"
-
 if [ "$WORLD_SIZE" -gt 1 ]; then
-    LAUNCH_ARGS="--multi_gpu $LAUNCH_ARGS --num_machines $NUM_NODES"
-    # Although eval is single-node, we still set these for consistency
-    LAUNCH_ARGS="$LAUNCH_ARGS --main_process_ip $MASTER_ADDR --main_process_port $MASTER_PORT --rdzv_backend static --machine_rank \$SLURM_PROCID"
+    LAUNCH_ARGS="--multi_gpu $LAUNCH_ARGS --num_machines ${{SLURM_NNODES:-1}}"
 fi
 
-echo "🚀 Launching with: accelerate launch $LAUNCH_ARGS"
-
-srun --ntasks-per-node=1 --nodes="${{NUM_NODES}}" \\
-  bash -c "accelerate launch $LAUNCH_ARGS \\
-  --config_file '{acc_config}' \\
-  '{script_path}' {' '.join(eval_flags_escaped)}"
+srun --label --ntasks-per-node=1 bash -c "accelerate launch $LAUNCH_ARGS --config_file \"{acc_config}\" \"{script_path}\" {eval_args_str}"
 """
-
-    # Write to a temporary file
-    temp_script = ".generated_eval.sh"
-    with open(temp_script, "w") as f:
-        f.write(bash_script)
-    
-    # Submit job
-    os.makedirs(".logs", exist_ok=True)
-    print(f"🚀 Submitting evaluation job via configuration: {args.run_config}")
-    
-    sbatch_cmd = ["sbatch"]
-    if args.begin:
-        sbatch_cmd.extend(["--begin", args.begin])
-    if args.after:
-        sbatch_cmd.extend(["--dependency", f"afterok:{args.after}"])
-        print(f"🔗 Setting job dependency: wait for {args.after} to complete successfully.")
-    sbatch_cmd.append(temp_script)
-    
-    result = subprocess.run(sbatch_cmd)
-    
-    if result.returncode == 0:
-        print(f"✅ Job submitted successfully. Script: {temp_script}")
-    else:
-        print(f"❌ Failed to submit job.")
+        script_name = f".generated_eval_{idx}.sh"
+        if len(exp_configs) == 1: script_name = ".generated_eval.sh"
+        
+        with open(script_name, "w") as f:
+            f.write(bash_script)
+            
+        if args.dry_run:
+            print(f"🔍 [Dry Run] Generated {script_name} for evaluation: {task_slug} on {model_slug}")
+            continue
+            
+        print(f"🚀 Submitting evaluation {idx+1}/{len(exp_configs)}: {task_slug}")
+        os.makedirs(".logs", exist_ok=True)
+        result = subprocess.run(["sbatch", script_name])
+        if result.returncode == 0:
+            print(f"✅ Job submitted. Results will be at: {output_path}")
+        else:
+            print(f"❌ Failed to submit job {idx}.")
 
 if __name__ == "__main__":
     main()

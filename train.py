@@ -4,7 +4,9 @@ import subprocess
 import os
 import sys
 import shutil
+import copy
 from dllm.utils.naming import get_experiment_naming, flatten_config_dict
+from dllm.utils.config import load_resolved_config, resolve_keywords, expand_matrix_config
 
 def resolve_config_path(path: str, base_dir: str) -> str:
     """
@@ -41,37 +43,39 @@ def main():
                         help="Slurm job name")
     parser.add_argument("--begin",
                         help="Time to start the Slurm job (e.g. 'now+60' or '22:00')")
+    parser.add_argument("--dry_run", action="store_true", help="Generate scripts but do not submit jobs")
     
     # Collect remaining args to pass directly to training script
     args, extra_args = parser.parse_known_args()
 
-    # Resolve paths
-    args.run_config = resolve_config_path(args.run_config, "configs/train")
-    args.slurm_config = resolve_config_path(args.slurm_config, "configs/slurm")
+    # 0. Load Keywords
+    keyword_map = {}
+    if os.path.exists("configs/keywords.yaml"):
+        with open("configs/keywords.yaml", "r") as f:
+            keyword_map = yaml.safe_load(f) or {}
 
-    # 1. Load YAML Configurations
-    with open(args.run_config, 'r') as f:
-        run_cfg = yaml.safe_load(f)
-    if "training" in run_cfg:
-        run_cfg["training"] = flatten_config_dict(run_cfg["training"])
-    with open(args.slurm_config, 'r') as f:
-        slurm_cfg = yaml.safe_load(f)
-
-    # 1a. Set default job name or override from CLI
-    slurm_cfg["job_name"] = args.job_name
-
-    # 1b. Handle scheduling delay
+    # 1. Load Slurm Config (Shared across all matrix entries)
+    slurm_path = resolve_config_path(args.slurm_config, "configs/slurm")
+    with open(slurm_path, 'r') as f:
+        slurm_cfg_base = yaml.safe_load(f) or {}
+    slurm_cfg_base["job_name"] = args.job_name
     if args.begin:
-        slurm_cfg["begin"] = args.begin
-        print(f"🕒 Scheduling job to start at: {args.begin}")
+        slurm_cfg_base["begin"] = args.begin
 
-    # 1c. Handle CLI Overwrites (Format: --slurm.key val or --training.key val)
-    remaining_extra_args = []
+    # 2. Load and Resolve Training Config(s)
+    # This automatically merges with configs/default.yaml if it exists
+    base_run_cfg = load_resolved_config(args.run_config, "configs/train", "../default.yaml")
+    if "training" in base_run_cfg:
+        base_run_cfg["training"] = flatten_config_dict(base_run_cfg["training"])
+    
+    # Resolve keywords in the base config
+    base_run_cfg = resolve_keywords(base_run_cfg, keyword_map)
+
+    # 3. Handle CLI Overwrites (Apply to base before expansion)
     i = 0
     while i < len(extra_args):
         arg = extra_args[i]
         if arg.startswith("--slurm.") or arg.startswith("--training."):
-            # handle --key=val case
             if "=" in arg:
                 key_full, val = arg.split("=", 1)
             else:
@@ -81,253 +85,172 @@ def main():
             
             prefix, key = key_full.lstrip("-").split(".", 1)
             
-            # Apply override
+            # Type conversion for common types
+            if isinstance(val, str):
+                if val.lower() == "true": val = True
+                elif val.lower() == "false": val = False
+                elif val.startswith("[") and val.endswith("]"):
+                    import ast
+                    try: val = ast.literal_eval(val)
+                    except: pass
+
             if prefix == "slurm":
-                slurm_cfg[key] = val
-                print(f"🔧 Overwriting Slurm config: {key} = {val}")
+                slurm_cfg_base[key] = val
             elif prefix == "training":
-                if "training" not in run_cfg: run_cfg["training"] = {}
-                run_cfg["training"][key] = val
-                print(f"🔧 Overwriting Training config: {key} = {val}")
-        else:
-            remaining_extra_args.append(arg)
+                if "training" not in base_run_cfg: base_run_cfg["training"] = {}
+                base_run_cfg["training"][key] = val
         i += 1
-    extra_args = remaining_extra_args
 
-    # 2. Extract Slurm Directives and Setup Metadata
-    # 2a. Determine naming based on config
-    if "training" not in run_cfg: run_cfg["training"] = {}
-    if "seed" not in run_cfg["training"]: run_cfg["training"]["seed"] = 42
-    
-    group, name, tags, output_dir = get_experiment_naming(run_cfg, slurm_cfg)
+    # 4. Expand Matrix of Experiments
+    try:
+        exp_configs = list(expand_matrix_config(base_run_cfg))
+    except ValueError as e:
+        print(f"❌ Configuration Matrix Error: {e}")
+        sys.exit(1)
+        
+    print(f"🧪 Found {len(exp_configs)} experiment(s) in the matrix configuration.")
 
+    for idx, run_cfg in enumerate(exp_configs):
+        slurm_cfg = copy.deepcopy(slurm_cfg_base)
+        
+        # 4a. Naming and Directories
+        if "training" not in run_cfg: run_cfg["training"] = {}
+        if "seed" not in run_cfg["training"]: run_cfg["training"]["seed"] = 42
+        
+        group, run_name, tags, output_dir = get_experiment_naming(run_cfg, slurm_cfg)
+        
+        # If matrix, append index to job name to distinguish in squeue
+        if len(exp_configs) > 1:
+            slurm_cfg["job_name"] = f"{slurm_cfg['job_name']}_{idx}"
 
-    
-    # 2b. Slurm mapping
-    slurm_directives = ["#!/bin/bash"]
-    sbatch_map = {
-        "begin": "--begin",
-        "job_name": "--job-name",
-        "nodes": "--nodes",
-        "gpus_per_node": "--gpus-per-node",
-        "time": "--time",
-        "mem": "--mem",
-        "cpus_per_task": "--cpus-per-task",
-        "ntasks_per_node": "--ntasks-per-node",
-        "partition": "--partition",
-        "output": "--output",
-        "error": "--error",
-        "requeue": "--requeue",
-        "working_dir": "--chdir",
-        "account": "--account",
-        "signal": "--signal"
-    }
-    for k, v in slurm_cfg.items():
-        if k in sbatch_map:
-            flag = sbatch_map[k]
-            if v is True:
-                slurm_directives.append(f"#SBATCH {flag}")
-            elif v is False:
-                continue
-            else:
-                if flag.startswith("--"):
-                    slurm_directives.append(f"#SBATCH {flag}={v}")
+        # 4b. Construct Slurm Directives
+        slurm_directives = ["#!/bin/bash"]
+        sbatch_map = {
+            "begin": "--begin",
+            "job_name": "--job-name",
+            "nodes": "--nodes",
+            "gpus_per_node": "--gpus-per-node",
+            "time": "--time",
+            "mem": "--mem",
+            "cpus_per_task": "--cpus-per-task",
+            "ntasks_per_node": "--ntasks-per-node",
+            "partition": "--partition",
+            "output": "--output",
+            "error": "--error",
+            "requeue": "--requeue",
+            "working_dir": "--chdir",
+            "account": "--account",
+            "signal": "--signal"
+        }
+        for k, v in slurm_cfg.items():
+            if k in sbatch_map:
+                flag = sbatch_map[k]
+                if v is True: slurm_directives.append(f"#SBATCH {flag}")
+                elif v is False: continue
                 else:
-                    slurm_directives.append(f"#SBATCH {flag} {v}")
+                    if flag.startswith("--"): slurm_directives.append(f"#SBATCH {flag}={v}")
+                    else: slurm_directives.append(f"#SBATCH {flag} {v}")
 
-    # 3. Environment Context
-    master_addr = subprocess.check_output(["hostname", "-i"]).decode().split()[0]
-    
-    env_exports = [
-        f"export WANDB_NAME=\"{name}\"",
-        f"export WANDB_RUN_GROUP=\"{group}\"",
-        f"export WANDB_TAGS=\"{','.join(tags)}\"",
-        f"export WANDB_PROJECT=\"{os.getenv('WANDB_PROJECT', 'BPTT-llada')}\"",
-        "export WANDB_INIT_TIMEOUT=300",
-        "export WANDB_DEBUG=false",
-        "export HF_HOME=\"$PWD/.cache\"",
-        "export HF_DATASETS_CACHE=\"$PWD/.cache/datasets\"",
-        "export HF_DATASETS_OFFLINE=0",
-        "export TRANSFORMERS_OFFLINE=0",
-        "export HF_HUB_OFFLINE=0",
-        "export TORCH_NCCL_ASYNC_ERROR_HANDLING=1",
-        # NCCL / InfiniBand setup for Killarney/Slurm
-        "export NCCL_IB_DISABLE=0",
-        "export NCCL_SOCKET_IFNAME=ib0,eth,eno,enp,10.1,172",
-        "export NCCL_IB_HCA=mlx5_0",
-        "export NCCL_TIMEOUT=7200",
-        "export NCCL_IB_TIMEOUT=22",
-        "export NCCL_IB_RETRY_CNT=14", 
-        "export NCCL_DEBUG=INFO",
-        "export NCCL_DEBUG_SUBSYS=ALL",
-        "export TORCH_DISTRIBUTED_DEBUG=DETAIL",
-        "export OMP_NUM_THREADS=16",
-        "export PYTHONUNBUFFERED=1",
-    ]
+        # 4c. Setup Environment Variables
+        env_exports = [
+            f"export WANDB_NAME=\"{run_name}\"",
+            f"export WANDB_RUN_GROUP=\"{group}\"",
+            f"export WANDB_TAGS=\"{','.join(tags)}\"",
+            f"export WANDB_PROJECT=\"{os.getenv('WANDB_PROJECT', 'BPTT-llada')}\"",
+            "export WANDB_INIT_TIMEOUT=300",
+            "export HF_HOME=\"$PWD/.cache\"",
+            "export HF_DATASETS_CACHE=\"$PWD/.cache/datasets\"",
+            "export PYTHONHASHSEED=42",
+            "export CUBLAS_WORKSPACE_CONFIG=:4096:8",
+            "export TORCH_DISTRIBUTED_DEFAULT_TIMEOUT=43200", 
+            "export ACCELERATE_TIMEOUT_IN_SECONDS=43200", 
+        ]
 
-    # 4. Prepare Training Command
-    training = run_cfg["training"]
-    script_path = training.pop("script_path", "examples/llada/sft.py")
-    training.pop("run_id", None)  # Consume run_id here to avoid HfArgumentParser errors in the subprocess
-    training["output_dir"] = output_dir
-    
-    # 4a. Auto-resume logic
-    if os.path.exists(output_dir) and any(d.startswith("checkpoint-") for d in os.listdir(output_dir)):
-        if "resume_from_checkpoint" not in training:
-            training["resume_from_checkpoint"] = "True"
-            print(f"🔄 Checkpoint found in {output_dir}. Auto-resuming...")
-    
-    # Combine training params from YAML and CLI extra args
-    train_flags = []
-    for k, v in training.items():
-        if isinstance(v, bool):
-            if v: train_flags.append(f"--{k}")
-        elif isinstance(v, list):
-            # For list arguments, HfArgumentParser expects: --key val1 val2 ...
-            train_flags.append(f"--{k}")
-            for item in v:
-                train_flags.append(str(item))
-        else:
-            train_flags.append(f"--{k}")
-            train_flags.append(str(v))
-    train_flags.extend(extra_args)
+        # 4d. Prepare training flags
+        training = run_cfg["training"]
+        script_path = training.pop("script_path", "examples/llada/sft.py")
+        training["output_dir"] = output_dir
+        
+        train_flags = []
+        for k, v in training.items():
+            if v is True: train_flags.append(f"--{k}")
+            elif v is False or v is None: continue
+            else:
+                if isinstance(v, list): v = f"'{v}'"
+                train_flags.append(f"--{k} {v}")
+        
+        # Add remaining pass-through args
+        for arg in extra_args:
+            if not arg.startswith("--slurm.") and not arg.startswith("--training."):
+                train_flags.append(arg)
 
-    # 4b. Automation: Ensure custom modeling code is present in the output directory
-    # This ensures and enables `trust_remote_code=True` loading for checkpoints.
-    if "llada" in training.get("model_name_or_path", "").lower():
-        model_src = "dllm/pipelines/llada/models/"
-        if os.path.exists(model_src):
-            print(f"ℹ️ Copying LLaDA modeling files to {output_dir}...")
-            os.makedirs(output_dir, exist_ok=True)
-            for f in os.listdir(model_src):
-                if f.endswith(".py"):
-                    shutil.copy2(os.path.join(model_src, f), output_dir)
+        # 4e. Modeling setup
+        if "model_name_or_path" in training:
+            model_src = training["model_name_or_path"]
+            if os.path.exists(model_src) and os.path.isdir(model_src):
+                if not args.dry_run:
+                    print(f"ℹ️ Copying LLaDA modeling files to {output_dir}...")
+                    os.makedirs(output_dir, exist_ok=True)
+                    for f in os.listdir(model_src):
+                        if f.endswith(".py"):
+                            shutil.copy2(os.path.join(model_src, f), output_dir)
 
-    # Handle accelerate config path
-    acc_config = args.accelerate_config
-    if not acc_config.endswith(".yaml"):
-        acc_config = f"configs/accelerate/{acc_config}.yaml"
-
-    # Get working directory for script activation
-    working_dir = slurm_cfg.get("working_dir", os.getcwd())
-
-    # 5. Generate the Slurm Bash Script
-    slurm_header = chr(10).join(slurm_directives)
-    train_args_str = " ".join(train_flags)
-    
-    bash_script = f"""{slurm_header}
+        # 4f. Generate Script
+        acc_config = args.accelerate_config
+        if not acc_config.endswith(".yaml"):
+            acc_config = f"configs/accelerate/{acc_config}.yaml"
+        working_dir = slurm_cfg.get("working_dir", os.getcwd())
+        
+        slurm_header = "\n".join(slurm_directives)
+        train_args_str = " ".join(train_flags)
+        env_exports_str = "\n".join(env_exports)
+        
+        # Fix f-string backslash issue by pre-calculating or avoiding backslashes in {}
+        bash_script = f"""{slurm_header}
 set -e
-
-# ===== System Environment =====
-echo "Running from: $(pwd)"
 cd {working_dir}
-echo "Switched to: $(pwd)"
-
-module load StdEnv/2023 python/3.11.5 cuda/12.6 cudnn
-module load gcc opencv arrow
-
-# Activate virtualenv
-if [ -f "{working_dir}/.venv/bin/activate" ]; then
-    source "{working_dir}/.venv/bin/activate"
-elif [ -f "./.venv/bin/activate" ]; then
-    source "./.venv/bin/activate"
-else
-    echo "Warning: Could not find .venv/bin/activate"
-fi
-
+module load StdEnv/2023 python/3.11.5 cuda/12.6 cudnn gcc opencv arrow
+[ -f .venv/bin/activate ] && source .venv/bin/activate
 set -a
 [ -f .env ] && . ./.env
 set +a
+{env_exports_str}
 
-# ===== Exports =====
-{chr(10).join(env_exports)}
-
-# ===== Scale Calculation =====
-NUM_NODES=${{SLURM_NNODES:-1}}
-if [ -n "$SLURM_GPUS_ON_NODE" ]; then
-    GPUS_PER_NODE=$(echo "$SLURM_GPUS_ON_NODE" | grep -oE '[0-9]+' | head -n 1)
-elif [ -n "$CUDA_VISIBLE_DEVICES" ]; then
-    GPUS_PER_NODE=$(echo "$CUDA_VISIBLE_DEVICES" | tr ',' '\\n' | grep -v '^$' | wc -l)
-else
-    # Fallback to nvidia-smi if available, else 1
-    if command -v nvidia-smi &> /dev/null; then
-        GPUS_PER_NODE=$(nvidia-smi -L | wc -l)
-    else
-        GPUS_PER_NODE=1
-    fi
-fi
-GPUS_PER_NODE=${{GPUS_PER_NODE:-1}}
-WORLD_SIZE=$((NUM_NODES * GPUS_PER_NODE))
-
-# Get the master node name and resolve it to an IP
 MASTER_NAME=$(scontrol show hostnames "${{SLURM_JOB_NODELIST:-localhost}}" | head -n 1)
+MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i ~ /^10\\.[0-9]+\\./) {{print $i; exit}}}}')
+MASTER_ADDR=${{MASTER_ADDR:-$MASTER_NAME}}
+MASTER_PORT=$((20000 + ${{SLURM_JOB_ID:-0}} % 10000))
 
-if [ -z "${{SLURM_JOB_ID}}" ]; then
-    MASTER_ADDR="127.0.0.1"
-    MASTER_PORT=29500
-    SLURM_PROCID=0
-    SLURM_NODEID=0
-else
-    # Resolve the master node name to its primary IP address
-    # Prefer eth0 (10.1.x.x) for rdzv_endpoint as per Killarney documentation.
-    MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i ~ /^10\.1\./) {{f=1; print $i; exit}}}} END {{if(!f) print ""}}')
-    
-    # Fallback to any 10.x or 172.x if no 10.1.x found
-    if [ -z "$MASTER_ADDR" ]; then
-        MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i != "127.0.0.1" && ($i ~ /^10/ || $i ~ /^172/)) {{f=1; print $i; exit}}}} END {{if(!f) print ""}}')
-    fi
-    
-    # Final fallback to any non-loopback or hostname
-    if [ -z "$MASTER_ADDR" ]; then
-        MASTER_ADDR=$(srun --nodes=1 --ntasks=1 --nodelist=$MASTER_NAME hostname -i | awk '{{for(i=1;i<=NF;i++) if($i != "127.0.0.1") {{f=1; print $i; exit}}}} END {{if(!f) print ""}}')
-    fi
-    
-    # Final fallback to hostname
-    MASTER_ADDR=${{MASTER_ADDR:-$MASTER_NAME}}
-    MASTER_PORT=$((20000 + ${{SLURM_JOB_ID}} % 10000))
-fi
-
-echo "🚀 Training Scale: NUM_NODES=$NUM_NODES, GPUS_PER_NODE=$GPUS_PER_NODE, WORLD_SIZE=$WORLD_SIZE"
-
-# ===== Execution =====
-# Dynamically build accelerate launch arguments
+WORLD_SIZE=$((${{SLURM_NNODES:-1}} * ${{SLURM_GPUS_ON_NODE:-1}}))
 LAUNCH_ARGS="--num_processes $WORLD_SIZE"
-
 if [ "$WORLD_SIZE" -gt 1 ]; then
-    LAUNCH_ARGS="--multi_gpu $LAUNCH_ARGS --num_machines $NUM_NODES"
-    
-    # Multi-node specific
-    if [ "$NUM_NODES" -gt 1 ]; then
+    LAUNCH_ARGS="--multi_gpu $LAUNCH_ARGS --num_machines ${{SLURM_NNODES:-1}}"
+    if [ "${{SLURM_NNODES:-1}}" -gt 1 ]; then
         LAUNCH_ARGS="$LAUNCH_ARGS --main_process_ip $MASTER_ADDR --main_process_port $MASTER_PORT --machine_rank \$SLURM_NODEID --rdzv_backend c10d"
     fi
-    
-    # FSDP transformer layer wrapping (only if using FSDP)
-    if [[ "{acc_config}" == *"fsdp"* ]]; then
-        LAUNCH_ARGS="$LAUNCH_ARGS --fsdp_transformer_layer_cls_to_wrap LLaDABlock"
-    fi
+    if [[ "{acc_config}" == *"fsdp"* ]]; then LAUNCH_ARGS="$LAUNCH_ARGS --fsdp_transformer_layer_cls_to_wrap LLaDABlock"; fi
 fi
 
-echo "🚀 Launching with: accelerate launch $LAUNCH_ARGS"
-
-srun --label --ntasks-per-node=1 --nodes="${{NUM_NODES}}" bash -c "accelerate launch $LAUNCH_ARGS \\
-  --config_file \"{acc_config}\" \\
-  \"{script_path}\" {train_args_str}"
+srun --label --ntasks-per-node=1 bash -c "accelerate launch $LAUNCH_ARGS --config_file \"{acc_config}\" \"{script_path}\" {train_args_str}"
 """
+        script_name = f".generated_train_{idx}.sh"
+        if len(exp_configs) == 1: script_name = ".generated_train.sh"
 
-    # Write to a temporary file
-    temp_script = ".generated_train.sh"
-    with open(temp_script, "w") as f:
-        f.write(bash_script)
-    
-    # Submit job
-    os.makedirs(".logs", exist_ok=True)
-    print(f"🚀 Submitting job via configuration: {args.run_config}")
-    result = subprocess.run(["sbatch", temp_script])
-    
-    if result.returncode == 0:
-        print(f"✅ Job submitted successfully. Script: {temp_script}")
-    else:
-        print(f"❌ Failed to submit job.")
+        with open(script_name, "w") as f:
+            f.write(bash_script)
+        
+        # 5. Submission
+        if args.dry_run:
+            print(f"🔍 [Dry Run] Generated {script_name} for experiment: {run_name}")
+            continue
+            
+        print(f"🚀 Submitting experiment {idx+1}/{len(exp_configs)}: {run_name}")
+        os.makedirs(".logs", exist_ok=True)
+        result = subprocess.run(["sbatch", script_name])
+        if result.returncode == 0:
+            print(f"✅ Job submitted. Output directory: {output_dir}")
+        else:
+            print(f"❌ Failed to submit job {idx}.")
 
 if __name__ == "__main__":
     main()

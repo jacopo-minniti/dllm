@@ -1,36 +1,17 @@
 evaluation:
-  # Evaluation Harness (LLaDA Math500)
-  script_path: "dllm/pipelines/llada/eval.py"
   tasks: "math500_reasoning"
   num_fewshot: 4
-  batch_size: 8
-  seed: 42
-  device: "cuda"
-  apply_chat_template: False
-  log_samples: True
-
-  # Model Configuration
-  model: "llada"
+  
   model_args:
     pretrained: ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-puma-bptt-cab/lr5e-05_bs256_puma-th0.15_bptt4_cab-b2048-e4096-mask-rl15-30/checkpoint-final"
-    dtype: "bfloat16"
-    lora: False
     
-    # Bridge Intervention (Must match training dims)
     use_cab: True
-    cab_bottleneck_dim: 2048   
-    cab_mlp_expansion_dim: 4096
-    read_layer: [15, 30]
-    only_mask_tokens: True
+    cab_size: large
+    read_layers: [16, 31] # base 1
+    injection: masked
 
-    # Inference Memory (Loopholing carries CAB state over steps)
     use_loopholing: True
     threshold: 0.15
-    confidence_type: "top_prob"
-
-    # Sampling Strategy
-    max_new_tokens: 512
-    steps: 256                      
-    block_size: 32                  # Unmasks in chunks of 32
-    temperature: 0.0                # Greedy decoding for reasoning
-    remasking: "low_confidence"     # Essential for LLaDA refinement
+    
+    steps: 256
+    block_size: 32

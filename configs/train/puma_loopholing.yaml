@@ -1,57 +1,18 @@
 training:
   core:
-    script_path: "examples/llada/sft.py"
-    model_name_or_path: "GSAI-ML/LLaDA-8B-Base"
-    bf16: True
-    gradient_checkpointing: True
-    seed: 42
-    ddp_find_unused_parameters: False
+    model_name_or_path: llada-8b
     loss_type: "puma_bptt"
   
-  puma:
-    active: True
-    puma_threshold: 0.15
-  
-  lora:
-    active: False
-    r: 64
-    lora_alpha: 128
-    lora_dropout: 0.0
-    target_modules: "all-linear"
-  
-  bptt:
-    active: True
-    bptt_steps: 2
-  
+  puma: { active: True }
+  bptt: 2
+
   loophole:
     active: True
-    read_layer: [15]
-    only_mask_tokens: True
-  
-  cab:
-    active: False
+    read_layers: 16 # base 1
+    injection: masked
   
   hyperparameters:
-    num_train_epochs: -1
     max_steps: 500
     learning_rate: 2e-05
-    per_device_train_batch_size: 8
-    gradient_accumulation_steps: 8
-    lr_scheduler_type: "linear"
-    warmup_ratio: 0.1
-    attention_dropout: 0.05
-    residual_dropout: 0.05
-    embedding_dropout: 0.05
   
-  dataset:
-    # "AI-MO/NuminaMath-CoT[train:50000,test:1000]"
-    # "allenai/tulu-3-sft-mixture[train:50000,test:5000]"
-    dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:5000]"
-    use_chat_template: False
-    mask_prompt_loss: True
-  
-  logging:
-    logging_steps: 10
-    save_steps: 100
-    eval_steps: 50
-    save_only_model: False
+  dataset: tulu

@@ -1,0 +1,39 @@
+# Keyword Mappings and Shortcuts for Datasets, Models, and Parameters
+# These simplify your config files by setting common values with a single word.
+
+datasets:
+  tulu: "allenai/tulu-3-sft-mixture[train:50000,test:50000:52000]"
+  numina: "jacopo-minniti/NuminaMath-CoT-LLaDA-Goldilocks[train:50000,test:2000]"
+
+models:
+  llada-8b: "GSAI-ML/LLaDA-8B-Base"
+  llada-instruct: "GSAI-ML/LLaDA-8B-Instruct"
+
+# Shortcuts: When these keys are found in your YAML, they are expanded
+# into the specified set of parameters.
+shortcuts:
+  epochs:
+    small:  { num_train_epochs: 1 }
+    medium: { num_train_epochs: 2 }
+    large:  { num_train_epochs: 3 }
+  
+  backbone:
+    frozen:   { freeze_backbone: True }
+    unfrozen: { freeze_backbone: False }
+  
+  cab_size:
+    small:  { cab_bottleneck_dim: 512,  cab_mlp_expansion_dim: 1024 }
+    medium: { cab_bottleneck_dim: 1024, cab_mlp_expansion_dim: 2048 }
+    large:  { cab_bottleneck_dim: 2048, cab_mlp_expansion_dim: 4096 }
+
+  injection:
+    all:    { only_mask_tokens: False }
+    masked: { only_mask_tokens: True }
+
+  # BPTT steps is direct assignment
+  bptt:
+    1: { bptt_steps: 1 }
+    2: { bptt_steps: 2 }
+    4: { bptt_steps: 4 }
+    6: { bptt_steps: 6 }
+    8: { bptt_steps: 8 }

@@ -1,0 +1,22 @@
+training:
+  core:
+    model_name_or_path: llada-8b
+    loss_type: "puma_bptt"
+  
+  puma: { active: True }
+  bptt: [1, 2, 4, 6, 8] # Matrix expansion for 5 jobs
+
+  cab:
+    active: True
+    cab_size: small
+  
+  injection: all
+  read_layers: 18 # base 1 (internally layer 17)
+  dataset: tulu
+  backbone: frozen
+  epochs: small
+  
+  hyperparameters:
+    per_device_train_batch_size: 8
+    gradient_accumulation_steps: 8
+    seed: 42

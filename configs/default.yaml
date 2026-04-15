@@ -1,0 +1,47 @@
+# Global Defaults for dLLM (Training and Evaluation)
+# This file is automatically loaded and merged with your specific experiment YAMLs.
+
+training:
+  core:
+    bf16: True
+    gradient_checkpointing: True
+    seed: 42
+    ddp_find_unused_parameters: False
+    loss_type: "puma_bptt"
+    distributed_timeout: 43200
+  
+  hyperparameters:
+    num_train_epochs: -1
+    max_steps: 1000
+    learning_rate: 2e-05
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 8
+    lr_scheduler_type: "linear"
+    warmup_ratio: 0.1
+    max_grad_norm: 1.5
+  
+  dataset:
+    dataset_args: "tulu"
+    use_chat_template: False
+    mask_prompt_loss: True
+  
+  logging:
+    logging_steps: 10
+    save_steps: 100
+    eval_steps: 50
+    save_only_model: False
+
+evaluation:
+  script_path: "dllm/pipelines/llada/eval.py"
+  tasks: "math500_reasoning"
+  num_fewshot: 4
+  batch_size: 32
+  seed: 42
+  distributed_timeout: 3600
+  
+  model_args:
+    max_new_tokens: 512
+    steps: 512
+    block_size: 512
+    temperature: 0.0
+    cfg_scale: 0.0
