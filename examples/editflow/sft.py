@@ -18,7 +18,7 @@ class ModelArguments(dllm.utils.ModelArguments):
 
 @dataclass
 class DataArguments(dllm.utils.DataArguments):
-    dataset_args: str = "tatsu-lab/alpaca"
+    dataset: str = "tatsu-lab/alpaca"
     load_preprocessed_data: bool = False
     mask_prompt_loss: bool = field(
         default=True,
@@ -108,7 +108,7 @@ def train():
     # ----- Dataset ----------------------------------------------------------------
     with accelerate.PartialState().local_main_process_first():
         dataset = dllm.data.load_sft_dataset(
-            data_args.dataset_args,
+            data_args.dataset,
             load_preprocessed_data=data_args.load_preprocessed_data,
         )
         if not data_args.load_preprocessed_data:

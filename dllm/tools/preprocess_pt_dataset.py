@@ -19,7 +19,7 @@ class ScriptArguments:
     """Preprocess PT dataset."""
 
     model_name_or_path: str = "answerdotai/ModernBERT-large"
-    dataset_args: str = "OpenCoder-LLM/opc-annealing-corpus[lang:python]"  # required
+    dataset: str = "OpenCoder-LLM/opc-annealing-corpus[lang:python]"  # required
     output_dir: str = (
         ".data/pt/modernbert/opc-annealing-corpus[lang:python]"  # required
     )
@@ -92,7 +92,7 @@ def main():
     tokenizer = dllm.utils.get_tokenizer(args)
 
     # Load your raw dataset (must contain a "messages" field per example).
-    dataset = dllm.data.load_pt_dataset(args.dataset_args, streaming=False)
+    dataset = dllm.data.load_pt_dataset(args.dataset, streaming=False)
 
     preprocess_pt_dataset(
         dataset=dataset,

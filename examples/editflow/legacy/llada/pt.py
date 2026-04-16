@@ -41,7 +41,7 @@ class ModelArguments(editflow_pt.ModelArguments):
 
 @dataclass
 class DataArguments(editflow_pt.DataArguments):
-    dataset_args: str = "mlfoundations/dclm-baseline-1.0[train:10_000_000,test:10_000]"
+    dataset: str = "mlfoundations/dclm-baseline-1.0[train:10_000_000,test:10_000]"
 
 
 @dataclass

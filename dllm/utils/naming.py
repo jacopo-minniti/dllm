@@ -68,7 +68,7 @@ def get_experiment_naming(run_cfg, slurm_cfg):
     base_model = os.path.basename(model_path.rstrip("/"))
 
     # 1.5 Dataset Identification
-    dataset_raw = str(training.get("dataset_args", "unknown"))
+    dataset_raw = str(training.get("dataset", training.get("dataset", "unknown")))
     dataset_slug = dataset_raw.split("[")[0].split("/")[-1]
 
     # 2. Extract Active Interventions

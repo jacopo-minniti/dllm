@@ -45,7 +45,7 @@ class ModelArguments(dllm.utils.ModelArguments):
 
 @dataclass
 class DataArguments(dllm.utils.DataArguments):
-    dataset_args: str = "mlfoundations/dclm-baseline-1.0[train:10_000_000,test:10_000]"
+    dataset: str = "mlfoundations/dclm-baseline-1.0[train:10_000_000,test:10_000]"
     text_field: str = "text"
     streaming: bool = True
     drop_tail: bool = True
@@ -102,7 +102,7 @@ def train():
     # ----- Dataset ----------------------------------------------------------------
     with accelerate.PartialState().local_main_process_first():
         dataset = dllm.data.load_pt_dataset(
-            data_args.dataset_args,
+            data_args.dataset,
             streaming=data_args.streaming,
         )
         dataset = dataset.map(

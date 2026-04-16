@@ -34,7 +34,7 @@ training:
   dataset:
     # "AI-MO/NuminaMath-CoT[train:50000,test:1000]"
     # Use 0:50000 for train, 50000:51000 for evaluation from the 'train' split
-    dataset_args: "allenai/tulu-3-sft-mixture[train:50000,test:50000:51000]"
+    dataset: "allenai/tulu-3-sft-mixture[train:50000,test:50000:51000]"
     use_chat_template: False
     mask_prompt_loss: True
   

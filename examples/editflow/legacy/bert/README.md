@@ -15,7 +15,7 @@ To train [`ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-larg
 PYTHONPATH=. accelerate launch --config_file scripts/accelerate_configs/ddp.yaml --num_processes 1 \
     examples/editflow/bert/pt.py \
     --model_name_or_path ".models/editflow/ModernBERT-large" \
-    --dataset_args "Trelis/tiny-shakespeare" \
+    --dataset "Trelis/tiny-shakespeare" \
     --text_field "Text" \
     --insert_eos False \
     --max_length 128 \
@@ -43,7 +43,7 @@ To train [`ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-larg
 PYTHONPATH=. accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/editflow/bert/sft.py \
     --model_name_or_path ".models/editflow/ModernBERT-large" \
-    --dataset_args "tatsu-lab/alpaca" \
+    --dataset "tatsu-lab/alpaca" \
     --max_length 512 \
     --num_train_epochs 10 \
     --learning_rate 3e-4 \
@@ -66,7 +66,7 @@ PYTHONPATH=. python examples/editflow/sample.py \
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/editflow/bert/sft.py \
     --model_name_or_path "answerdotai/ModernBERT-large" \
-    --dataset_args "allenai/tulu-3-sft-mixture|HuggingFaceTB/smoltalk" \
+    --dataset "allenai/tulu-3-sft-mixture|HuggingFaceTB/smoltalk" \
     --max_length 1024 \
     --num_train_epochs 10 \
     --per_device_train_batch_size 48 \

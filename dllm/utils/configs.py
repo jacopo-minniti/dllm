@@ -54,7 +54,7 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
-    dataset_args: str = None  # overwrite this
+    dataset: str = None  # overwrite this
     num_proc: int = 8
     disable_caching: bool = False
     max_length: int = 1024

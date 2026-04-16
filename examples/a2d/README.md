@@ -65,7 +65,7 @@ To train [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B) on the [`ti
 accelerate launch --config_file scripts/accelerate_configs/ddp.yaml --num_processes 1 \
     examples/a2d/mdlm/pt.py \
     --model_name_or_path ".models/a2d/Qwen3-0.6B" \
-    --dataset_args "Trelis/tiny-shakespeare" \
+    --dataset "Trelis/tiny-shakespeare" \
     --text_field "Text" \
     --insert_eos False \
     --max_length 128 \
@@ -93,7 +93,7 @@ To train [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B) on the [`op
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/a2d/mdlm/pt.py \
     --model_name_or_path ".models/a2d/Qwen3-0.6B" \
-    --dataset_args "dylanebert/openwebtext" \
+    --dataset "dylanebert/openwebtext" \
     --text_field "text" \
     --streaming True \
     --insert_eos True \
@@ -125,7 +125,7 @@ To train [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B) on the [`al
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/a2d/mdlm/sft.py \
     --model_name_or_path ".models/a2d/Qwen3-0.6B" \
-    --dataset_args "tatsu-lab/alpaca" \
+    --dataset "tatsu-lab/alpaca" \
     --max_length 512 \
     --num_train_epochs 10 \
     --learning_rate 1e-4 \
@@ -152,7 +152,7 @@ To train [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B) on the [`ti
 accelerate launch --config_file scripts/accelerate_configs/ddp.yaml --num_processes 1 \
     examples/a2d/bd3lm/pt.py \
     --model_name_or_path ".models/a2d/Qwen3-0.6B" \
-    --dataset_args "Trelis/tiny-shakespeare" \
+    --dataset "Trelis/tiny-shakespeare" \
     --text_field "Text" \
     --insert_eos False \
     --max_length 128 \
@@ -181,7 +181,7 @@ To train [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B) on the [`op
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/a2d/bd3lm/pt.py \
     --model_name_or_path ".models/a2d/Qwen3-0.6B" \
-    --dataset_args "dylanebert/openwebtext" \
+    --dataset "dylanebert/openwebtext" \
     --text_field "text" \
     --streaming True \
     --insert_eos True \
@@ -213,7 +213,7 @@ To train [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B) on the [`al
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/a2d/bd3lm/sft.py \
     --model_name_or_path ".models/a2d/Qwen3-0.6B" \
-    --dataset_args "tatsu-lab/alpaca" \
+    --dataset "tatsu-lab/alpaca" \
     --max_length 512 \
     --num_train_epochs 10 \
     --learning_rate 1e-4 \
@@ -246,7 +246,7 @@ WANDB_MODE=online sbatch --nodes=8 --gres=gpu:8 scripts/train.slurm.sh \
     --accelerate_config "zero2" \
     --script_path "examples/a2d/mdlm/sft.py" \
     --model_name_or_path ".models/a2d/Qwen3-0.6B" \
-    --dataset_args "allenai/tulu-3-sft-mixture+HuggingFaceTB/smoltalk+OpenCoder-LLM/opc-sft-stage1[lang:python]+OpenCoder-LLM/opc-sft-stage2[lang:python]" \
+    --dataset "allenai/tulu-3-sft-mixture+HuggingFaceTB/smoltalk+OpenCoder-LLM/opc-sft-stage1[lang:python]+OpenCoder-LLM/opc-sft-stage2[lang:python]" \
     --max_length 1024 \
     --num_train_epochs 10 \
     --learning_rate 1e-4 \
@@ -262,7 +262,7 @@ WANDB_MODE=online sbatch --nodes=8 --gres=gpu:8 scripts/train.slurm.sh \
     --accelerate_config "zero2" \
     --script_path "examples/a2d/bd3lm/sft.py" \
     --model_name_or_path ".models/a2d/Qwen3-0.6B" \
-    --dataset_args "allenai/tulu-3-sft-mixture+HuggingFaceTB/smoltalk+OpenCoder-LLM/opc-sft-stage1[lang:python]+OpenCoder-LLM/opc-sft-stage2[lang:python]" \
+    --dataset "allenai/tulu-3-sft-mixture+HuggingFaceTB/smoltalk+OpenCoder-LLM/opc-sft-stage1[lang:python]+OpenCoder-LLM/opc-sft-stage2[lang:python]" \
     --max_length 512 \
     --num_train_epochs 10 \
     --learning_rate 1e-4 \

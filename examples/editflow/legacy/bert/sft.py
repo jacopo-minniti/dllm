@@ -41,7 +41,7 @@ class ModelArguments(editflow_sft.ModelArguments):
 
 @dataclass
 class DataArguments(editflow_sft.DataArguments):
-    dataset_args: str = "tatsu-lab/alpaca"
+    dataset: str = "tatsu-lab/alpaca"
 
 
 @dataclass

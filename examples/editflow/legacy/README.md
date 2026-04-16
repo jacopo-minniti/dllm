@@ -77,7 +77,7 @@ accelerate launch \
     --config_file scripts/accelerate_configs/zero2.yaml \
     examples/editflow/legacy/llada/sft.py \
     --model_name_or_path "GSAI-ML/LLaDA-8B-Instruct" \
-    --dataset_args "allenai/tulu-3-sft-mixture" \
+    --dataset "allenai/tulu-3-sft-mixture" \
     --output_dir ".models/EditFlow-LLaDA-8B-Instruct-Adapt/tulu-3-sft-mixture" \
     --x0_sampler "masks[length:128]" \
     --max_length 1024 \
@@ -91,7 +91,7 @@ PYTHONPATH=. sbatch --nodes=4 --gres=gpu:8 scripts/train.slurm.sh \
     --accelerate_config "fsdp" \
     --script_path "examples/editflow/legacy/llada/sft.py" \
     --model_name_or_path "GSAI-ML/LLaDA-8B-Instruct" \
-    --dataset_args "allenai/tulu-3-sft-mixture" \
+    --dataset "allenai/tulu-3-sft-mixture" \
     --output_dir ".models/EditFlow-LLaDA-8B-Instruct-Adapt/tulu-3-sft-mixture" \
     --x0_sampler "masks[length:128]" \
     --max_length 1024 \
@@ -112,7 +112,7 @@ PYTHONPATH=. sbatch --nodes=24 --gres=gpu:8 scripts/train.slurm.sh \
     --accelerate_config "fsdp" \
     --script_path "examples/editflow/legacy/llada/pt.py" \
     --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
-    --dataset_args "mlfoundations/dclm-baseline-1.0" \
+    --dataset "mlfoundations/dclm-baseline-1.0" \
     --output_dir ".models/EditFlow-LLaDA-8B-Base/dclm-baseline-1.0" \
     --x0_sampler "masks[length:128]" \
     --max_length 1024 \
@@ -128,7 +128,7 @@ PYTHONPATH=. sbatch --nodes=1 --gres=gpu:8 scripts/train.slurm.sh \
     --accelerate_config "fsdp" \
     --script_path "examples/editflow/legacy/llada/sft.py" \
     --model_name_or_path ".models/EditFlow-LLaDA-8B-Base/dclm-baseline-1.0/checkpoint-final" \
-    --dataset_args "allenai/tulu-3-sft-mixture[train:10000,test:1000]" \
+    --dataset "allenai/tulu-3-sft-mixture[train:10000,test:1000]" \
     --output_dir ".models/EditFlow-LLaDA-8B-Base/dclm-baseline-1.0" \
     --x0_sampler "masks[length:128]" \
     --max_length 1024 \

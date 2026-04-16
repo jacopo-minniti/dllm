@@ -45,7 +45,7 @@ class ModelArguments(dllm.utils.ModelArguments):
 
 @dataclass
 class DataArguments(dllm.utils.DataArguments):
-    dataset_args: str = "Trelis/tiny-shakespeare"
+    dataset: str = "Trelis/tiny-shakespeare"
     text_field: str = "Text"
     max_length: int = 128
     streaming: bool = False
@@ -85,7 +85,7 @@ def train():
     # ----- Dataset ----------------------------------------------------------------
     with accelerate.PartialState().local_main_process_first():
         dataset = dllm.data.load_pt_dataset(
-            data_args.dataset_args,
+            data_args.dataset,
             streaming=data_args.streaming,
             load_preprocessed_data=data_args.load_preprocessed_data,
         )

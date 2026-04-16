@@ -76,7 +76,7 @@ accelerate launch \
     --config_file scripts/accelerate_configs/fsdp.yaml \
     examples/llada/sft.py \
     --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
-    --dataset_args "tatsu-lab/alpaca" \
+    --dataset "tatsu-lab/alpaca" \
     --max_length 1024 \
     --num_train_epochs 5 \
     --learning_rate 2e-5 \
@@ -90,7 +90,7 @@ sbatch --nodes=2 --gres=gpu:8 scripts/train.slurm.sh \
     --accelerate_config "fsdp" \
     --script_path "examples/llada/sft.py" \
     --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
-    --dataset_args "tatsu-lab/alpaca" \
+    --dataset "tatsu-lab/alpaca" \
     --max_length 1024 \
     --num_train_epochs 5 \
     --learning_rate 2e-5 \
@@ -109,7 +109,7 @@ Though LLaDA is trained on proprietary data, we tried our best to reproduce [`LL
 python dllm/tools/preprocess_sft_dataset.py \
     --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
     --sft_map_fn_path "dllm.utils.default_sft_map_fn" \
-    --dataset_args "allenai/tulu-3-sft-mixture" \
+    --dataset "allenai/tulu-3-sft-mixture" \
     --output_dir ".data/sft/llada/tulu-3-sft-mixture" \
     --num_proc 64
 
@@ -118,7 +118,7 @@ sbatch --nodes=24 --gres=gpu:8 scripts/train.slurm.sh \
     --accelerate_config "fsdp" \
     --script_path "examples/llada/sft.py" \
     --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
-    --dataset_args ".data/sft/llada/tulu-3-sft-mixture" \
+    --dataset ".data/sft/llada/tulu-3-sft-mixture" \
     --load_preprocessed_data True \
     --max_length 1024 \
     --num_train_epochs 5 \
@@ -138,7 +138,7 @@ sbatch --nodes=24 --gres=gpu:8 scripts/train.slurm.sh \
     --accelerate_config "fsdp" \
     --script_path "examples/llada/pt.py" \
     --model_name_or_path "GSAI-ML/LLaDA-8B-Base" \
-    --dataset_args "mlfoundations/dclm-baseline-1.0" \
+    --dataset "mlfoundations/dclm-baseline-1.0" \
     --max_length 1024 \
     --max_steps 2000 \
     --learning_rate 1e-4 \

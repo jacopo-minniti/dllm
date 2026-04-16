@@ -34,10 +34,10 @@ def make_dataset_infinite(ds: Union[Dataset, IterableDataset, DatasetDict, Itera
 
 
 def load_sft_dataset(
-    dataset_args: str, load_preprocessed_data: bool = False, infinite: bool = False
+    dataset: str, load_preprocessed_data: bool = False, infinite: bool = False
 ) -> Union[DatasetDict, IterableDatasetDict]:
     """
-    Examples of dataset_args:
+    Examples of dataset:
       - "tatsu-lab/alpaca"
       - "OpenCoder-LLM/opc-sft-stage2[name:educational_instruct,lang:python]"
       - "tatsu-lab/alpaca[train:5000]"
@@ -47,7 +47,7 @@ def load_sft_dataset(
     from dllm.data.opc import load_dataset_opc_sft
     from dllm.data.numina import load_dataset_numina
 
-    specs = [p.strip() for p in re.split(r"[|+]", dataset_args) if p.strip()]
+    specs = [p.strip() for p in re.split(r"[|+]", dataset) if p.strip()]
     all_parts = []
     
     import time
@@ -147,10 +147,10 @@ def load_sft_dataset(
 
 
 def load_pt_dataset(
-    dataset_args: str, streaming: bool = True, load_preprocessed_data: bool = False, infinite: bool = True
+    dataset: str, streaming: bool = True, load_preprocessed_data: bool = False, infinite: bool = True
 ) -> Union[DatasetDict, IterableDatasetDict]:
     """
-    Examples of dataset_args:
+    Examples of dataset:
       - "mlfoundations/dclm-baseline-1.0"
       - "OpenCoder-LLM/opc-fineweb-code-corpus"
       - "OpenCoder-LLM/opc-fineweb-math-corpus"
@@ -159,9 +159,9 @@ def load_pt_dataset(
     """
     from dllm.data.opc import load_dataset_opc_annealing
 
-    specs = [p.strip() for p in re.split(r"[|+]", dataset_args) if p.strip()]
+    specs = [p.strip() for p in re.split(r"[|+]", dataset) if p.strip()]
     if not specs:
-        raise ValueError("Empty dataset_args for load_pt_dataset.")
+        raise ValueError("Empty dataset for load_pt_dataset.")
 
     # ---------- Shared loader (only differs by streaming flag) ----------
     def _load_base_dataset(

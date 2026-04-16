@@ -51,7 +51,7 @@ class ModelArguments(dllm.utils.ModelArguments):
 
 @dataclass
 class DataArguments(dllm.utils.DataArguments):
-    dataset_args: str = "allenai/tulu-3-sft-mixture[train:10000,test:1000]"
+    dataset: str = "allenai/tulu-3-sft-mixture[train:10000,test:1000]"
     load_preprocessed_data: bool = False
     mask_prompt_loss: bool = field(
         default=True,
@@ -124,7 +124,7 @@ def train():
     try:
         time_log(f"All ranks: Attempting to load dataset (HF_OFFLINE is now disabled)...")
         dataset = dllm.data.load_sft_dataset(
-            data_args.dataset_args,
+            data_args.dataset,
             load_preprocessed_data=data_args.load_preprocessed_data,
         )
         time_log("All ranks: Raw dataset load succeeded.")
@@ -139,7 +139,7 @@ def train():
     import hashlib
     # Generate a unique hash for this dataset configuration to allow sharing across experiments
     # This prevents re-tokenizing the same dataset when only training hyperparams (LR, BS) change.
-    cache_id = f"{data_args.dataset_args}_{data_args.use_chat_template}_{data_args.mask_prompt_loss}_{model_args.model_name_or_path}"
+    cache_id = f"{data_args.dataset}_{data_args.use_chat_template}_{data_args.mask_prompt_loss}_{model_args.model_name_or_path}"
     cache_hash = hashlib.md5(cache_id.encode()).hexdigest()
     processed_cache_path = os.path.join(".cache", "processed_datasets", cache_hash)
     

@@ -7,7 +7,7 @@ evaluation:
     
     use_cab: True
     cab_size: large
-    read_layers: [16, 31] # base 1
+    read_layers: [[16, 31]] # base 1
     injection: masked
 
     use_loopholing: True

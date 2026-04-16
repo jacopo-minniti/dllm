@@ -60,7 +60,7 @@ To train [`ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-larg
 accelerate launch --config_file scripts/accelerate_configs/ddp.yaml --num_processes 1 \
     examples/editflow/pt.py \
     --model_name_or_path ".models/editflow/ModernBERT-large" \
-    --dataset_args "Trelis/tiny-shakespeare" \
+    --dataset "Trelis/tiny-shakespeare" \
     --text_field "Text" \
     --max_length 128 \
     --num_train_epochs 10 \
@@ -87,7 +87,7 @@ python -u examples/editflow/chat.py \
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/editflow/pt.py \
     --model_name_or_path ".models/editflow/ModernBERT-large" \
-    --dataset_args "dylanebert/openwebtext" \
+    --dataset "dylanebert/openwebtext" \
     --text_field "text" \
     --streaming True \
     --max_length 512 \
@@ -119,7 +119,7 @@ To train [`ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-larg
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/editflow/sft.py \
     --model_name_or_path ".models/editflow/ModernBERT-large" \
-    --dataset_args "tatsu-lab/alpaca" \
+    --dataset "tatsu-lab/alpaca" \
     --max_length 512 \
     --num_train_epochs 10 \
     --learning_rate 1e-4 \

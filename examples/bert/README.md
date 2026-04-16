@@ -41,7 +41,7 @@ To train [`ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-larg
 accelerate launch --config_file scripts/accelerate_configs/ddp.yaml --num_processes 1 \
     examples/bert/pt.py \
     --model_name_or_path "answerdotai/ModernBERT-large" \
-    --dataset_args "Trelis/tiny-shakespeare" \
+    --dataset "Trelis/tiny-shakespeare" \
     --text_field "Text" \
     --insert_eos False \
     --max_length 128 \
@@ -69,7 +69,7 @@ To train [`ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-larg
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/bert/pt.py \
     --model_name_or_path "answerdotai/ModernBERT-large" \
-    --dataset_args "dylanebert/openwebtext" \
+    --dataset "dylanebert/openwebtext" \
     --text_field "text" \
     --streaming True \
     --insert_eos True \
@@ -101,7 +101,7 @@ To train [`ModernBERT-large`](https://huggingface.co/answerdotai/ModernBERT-larg
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/bert/sft.py \
     --model_name_or_path "answerdotai/ModernBERT-large" \
-    --dataset_args "tatsu-lab/alpaca" \
+    --dataset "tatsu-lab/alpaca" \
     --max_length 512 \
     --num_train_epochs 10 \
     --learning_rate 1e-4 \
@@ -131,7 +131,7 @@ To reproduce [`ModernBERT-base-chat-v0.1`](https://huggingface.co/dllm-hub/Moder
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/bert/sft.py \
     --model_name_or_path "answerdotai/ModernBERT-base" \
-    --dataset_args "allenai/tulu-3-sft-mixture+HuggingFaceTB/smoltalk" \
+    --dataset "allenai/tulu-3-sft-mixture+HuggingFaceTB/smoltalk" \
     --max_length 1024 \
     --num_train_epochs 10 \
     --learning_rate 1e-4 \
@@ -145,7 +145,7 @@ To reproduce [`ModernBERT-large-chat-v0.1`](https://huggingface.co/dllm-hub/Mode
 accelerate launch --config_file scripts/accelerate_configs/zero2.yaml --num_processes 8 \
     examples/bert/sft.py \
     --model_name_or_path "answerdotai/ModernBERT-large" \
-    --dataset_args "allenai/tulu-3-sft-mixture+HuggingFaceTB/smoltalk" \
+    --dataset "allenai/tulu-3-sft-mixture+HuggingFaceTB/smoltalk" \
     --max_length 1024 \
     --num_train_epochs 10 \
     --learning_rate 1e-4 \

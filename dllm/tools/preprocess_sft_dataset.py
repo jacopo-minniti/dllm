@@ -4,7 +4,7 @@ Example:
 PYTHONPATH=. python dllm/tools/preprocess_sft_dataset.py \
     --model_name_or_path "Dream-org/Dream-v0-Base-7B" \
     --sft_map_fn_path "dllm.utils.ar_mdlm_sft_map_fn" \
-    --dataset_args "allenai/tulu-3-sft-mixture" \
+    --dataset "allenai/tulu-3-sft-mixture" \
     --output_dir ".data/sft/dream/tulu-3-sft-mixture" \
     --num_proc 64
 """
@@ -26,7 +26,7 @@ class ScriptArguments:
 
     model_name_or_path: str = "GSAI-ML/LLaDA-8B-Base"
     sft_map_fn_path: str = "dllm.utils.default_sft_map_fn"
-    dataset_args: str = "HuggingFaceTB/smoltalk"  # required
+    dataset: str = "HuggingFaceTB/smoltalk"  # required
     output_dir: str = ".data/sft/llada/smoltalk"  # required
     mask_prompt_loss: bool = True  # Mask prompt tokens in labels with -100
     num_proc: int = 32
@@ -81,7 +81,7 @@ def main():
     tokenizer = dllm.utils.get_tokenizer(args)
 
     # Load your raw dataset (must contain a "messages" field per example).
-    dataset = dllm.data.load_sft_dataset(args.dataset_args)
+    dataset = dllm.data.load_sft_dataset(args.dataset)
 
     # 4. Dynamically import the function based on the argument
     try:

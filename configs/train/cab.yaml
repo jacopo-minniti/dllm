@@ -3,7 +3,7 @@ training:
   bptt: 2
   cab_size: small
   injection: all
-  dataset_args: tulu
+  dataset: tulu
   use_chat_template: False
   mask_prompt_loss: True
   read_layer: [2]
