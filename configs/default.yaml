@@ -9,7 +9,7 @@ training:
     seed: 42
     ddp_find_unused_parameters: False
     loss_type: "puma_bptt"
-    distributed_timeout: 43200
+    ddp_timeout: 43200
   
   hyperparameters:
     num_train_epochs: 1
