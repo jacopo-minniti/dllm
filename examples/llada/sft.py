@@ -78,7 +78,7 @@ def train():
     parser = transformers.HfArgumentParser(
         (ModelArguments, DataArguments, TrainingArguments)
     )
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    model_args, data_args, training_args, _ = parser.parse_args_into_dataclasses(return_remaining_strings=True)
     
     # Handle SIGTERM (e.g. Slurm pre-emption or time limit)
     import signal

@@ -33,6 +33,8 @@ class ModelArguments:
     cab_bottleneck_dim: int = 128
     cab_mlp_expansion_dim: int = 512
     read_layer: list[int] = field(default_factory=lambda: [-1])
+    read_layers: list[int] = field(default=None)
+    freeze_backbone: bool = False
     cab_n_heads: int = 8
     cab_n_kv_heads: int = 4
     # --- model-level dropout ---
@@ -41,6 +43,10 @@ class ModelArguments:
     embedding_dropout: float = 0.1
 
     def __post_init__(self):
+        # Sync read_layer and read_layers
+        if self.read_layers is not None:
+             self.read_layer = self.read_layers
+        
         self.model_name_or_path = resolve_with_base_env(
             self.model_name_or_path, "BASE_MODELS_DIR"
         )
@@ -97,6 +103,10 @@ class TrainingArguments(transformers.TrainingArguments):
     ignore_data_skip: bool = field(
         default=False, 
         metadata={"help": "Avoid CPU RAM spikes during resume by not fast-forwarding data."}
+    )
+    ddp_timeout: int = field(
+        default=1800,
+        metadata={"help": "The timeout for `torch.distributed.init_process_group` in seconds."}
     )
 
     def __post_init__(self):
