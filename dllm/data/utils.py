@@ -45,6 +45,7 @@ def load_sft_dataset(
     """
     from dllm.data.alpaca import load_dataset_alpaca
     from dllm.data.opc import load_dataset_opc_sft
+    from dllm.data.numina import load_dataset_numina
 
     specs = [p.strip() for p in re.split(r"[|+]", dataset_args) if p.strip()]
     all_parts = []
@@ -106,6 +107,8 @@ def load_sft_dataset(
         elif _match(dataset_name_or_path, "openai/gsm8k"):
             from dllm.data.gsm8k import load_dataset_gsm8k
             ds = load_dataset_gsm8k(dataset_name_or_path)
+        elif _match(dataset_name_or_path, "NuminaMath"):
+            ds = load_dataset_numina(dataset_name_or_path)
         else:
             # General fallback: check if we can optimize split loading
             train_limit = kvs.get("train")
@@ -130,6 +133,13 @@ def load_sft_dataset(
         merged = _merge_datasetdicts(merged, part)
     
     ds = _ensure_datasetdict(merged)
+    
+    # [DEBUG] Print summary of loaded dataset
+    logger.info(f"[DEBUG] Final Loaded SFT dataset splits: {list(ds.keys())}")
+    for split in ds.keys():
+        cols = ds[split].column_names if hasattr(ds[split], "column_names") else "unknown"
+        logger.info(f"[DEBUG] Split '{split}' columns: {cols}")
+
     if infinite:
         logger.info("Repeating SFT dataset infinitely.")
         ds = make_dataset_infinite(ds)
