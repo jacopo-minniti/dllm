@@ -137,8 +137,8 @@ dmypy.json
 /wandb/
 /.logs/
 /.models/
-.generated_train.sh
-.generated_eval.sh
+.generated_train*.sh
+.generated_eval*.sh
 /.evals/
 test.py
 .prev_evals/

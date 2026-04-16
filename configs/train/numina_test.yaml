@@ -1,0 +1,8 @@
+training:
+  mode: cab_all
+  bptt: 2
+  cab_size: medium
+  read_layers: 18
+  injection: all
+  dataset: numina
+  epochs: medium
