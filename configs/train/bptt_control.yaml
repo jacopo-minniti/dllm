@@ -1,6 +1,6 @@
 training:
   mode: cab_all
-  bptt: [6, 8]  # Matrix
+  bptt: [1, 2, 4]  # Matrix
   cab_size: small
   injection: all
   read_layers: 18        # Base 1

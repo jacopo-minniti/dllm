@@ -41,7 +41,7 @@ evaluation:
   
   model_args:
     max_new_tokens: 512
-    steps: 512
-    block_size: 512
+    steps: 256
+    block_size: 32
     temperature: 0.0
     cfg_scale: 0.0

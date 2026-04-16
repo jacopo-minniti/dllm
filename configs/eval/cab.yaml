@@ -12,6 +12,3 @@ evaluation:
 
     use_loopholing: True
     threshold: 0.15
-    
-    steps: 256
-    block_size: 32
