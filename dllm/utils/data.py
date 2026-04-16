@@ -254,6 +254,29 @@ def default_sft_map_fn(row, *, tokenizer, mask_prompt_loss: bool = True, use_cha
     prompt_text = row.get("prompt", "")
     response_text = row.get("response", "")
     
+    # Fallback formatting when chat template is OFF but dataset has only messages or problem/solution
+    if not prompt_text and not response_text:
+        if "problem" in row and "solution" in row:
+            prompt_text = f"Problem:\n{row['problem']}\n\nSolution:"
+            response_text = str(row["solution"])
+        elif "messages" in row and isinstance(row["messages"], list):
+            messages = row["messages"]
+            prompt_parts = []
+            if len(messages) > 0 and messages[-1].get("role") == "assistant":
+                for m in messages[:-1]:
+                    role = m.get("role", "User").capitalize()
+                    content = m.get("content", "")
+                    prompt_parts.append(f"{role}: {content}")
+                prompt_text = "\n\n".join(prompt_parts) + "\n\nAssistant:"
+                response_text = messages[-1].get("content", "")
+            else:
+                for m in messages:
+                    role = m.get("role", "User").capitalize()
+                    content = m.get("content", "")
+                    prompt_parts.append(f"{role}: {content}")
+                prompt_text = "\n\n".join(prompt_parts)
+                response_text = ""
+
     # [DEBUG] Print what we found in the row when chat template is OFF or messages missing
     if not (use_chat_template and "messages" in row):
         print(f"\n[DEBUG] Raw Path - use_chat_template: {use_chat_template}")

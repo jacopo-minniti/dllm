@@ -174,7 +174,8 @@ def main():
         train_flags = []
         for k, v in training.items():
             if v is True: train_flags.append(f"--{k}")
-            elif v is False or v is None: continue
+            elif v is False: train_flags.append(f"--{k} False")
+            elif v is None: continue
             else:
                 if isinstance(v, list):
                     v = " ".join(map(str, v))
