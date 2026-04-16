@@ -22,7 +22,7 @@ training:
   
   dataset:
     dataset_args: "tulu"
-    use_chat_template: False
+    use_chat_template: True
     mask_prompt_loss: True
   
   logging:
