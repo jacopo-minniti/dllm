@@ -176,7 +176,8 @@ def main():
             if v is True: train_flags.append(f"--{k}")
             elif v is False or v is None: continue
             else:
-                if isinstance(v, list): v = f"'{v}'"
+                if isinstance(v, list):
+                    v = " ".join(map(str, v))
                 train_flags.append(f"--{k} {v}")
         
         # Add remaining pass-through args
