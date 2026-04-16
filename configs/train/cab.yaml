@@ -2,8 +2,11 @@ training:
   mode: cab_all
   bptt: 2
   cab_size: small
-  read_layers: -1
+  read_layers: 2
   injection: all
   dataset: tulu
-  max_steps: 500
   learning_rate: 2e-05
+  hyperparameters:
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 4
+
