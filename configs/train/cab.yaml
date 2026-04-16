@@ -2,9 +2,11 @@ training:
   mode: cab_all
   bptt: 2
   cab_size: small
-  read_layers: 2
   injection: all
-  dataset: tulu
+  dataset_args: tulu
+  use_chat_template: False
+  mask_prompt_loss: True
+  read_layer: [2]
   learning_rate: 2e-05
   hyperparameters:
     per_device_train_batch_size: 2
