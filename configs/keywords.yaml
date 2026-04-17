@@ -8,10 +8,31 @@ datasets:
 models:
   llada-8b: "GSAI-ML/LLaDA-8B-Base"
   llada-instruct: "GSAI-ML/LLaDA-8B-Instruct"
+  fast-dllm: "Efficient-Large-Model/Fast_dLLM_v2_1.5B"
 
 # Shortcuts: When these keys are found in your YAML, they are expanded
 # into the specified set of parameters.
 shortcuts:
+  # Model Shortcuts (Sets both name and default training script)
+  model:
+    llada-8b:
+      model_name_or_path: "llada-8b"
+      script_path: "examples/llada/sft.py"
+    llada-instruct:
+      model_name_or_path: "llada-instruct"
+      script_path: "examples/llada/sft.py"
+    fast-dllm:
+      model_name_or_path: "fast-dllm"
+      script_path: "examples/fastdllm_v2/sft.py"
+
+  # Evaluation Model Shortcuts (Sets name and evaluation script)
+  eval_model:
+    llada-8b:
+      model_name_or_path: "llada-8b"
+      script_path: "dllm/pipelines/llada/eval.py"
+    fast-dllm:
+      model_name_or_path: "fast-dllm"
+      script_path: "dllm/pipelines/fastdllm_v2/eval.py"
   # Mode Shortcuts (Controls multiple intervention flags and loss_type)
   mode:
     base:
@@ -59,7 +80,6 @@ shortcuts:
   backbone:
     frozen:   { freeze_backbone: True }
     unfrozen: { freeze_backbone: False }
-    full:     { freeze_backbone: False }
   
   cab_size:
     small:  { cab_bottleneck_dim: 512,  cab_mlp_expansion_dim: 1024 }

@@ -174,14 +174,21 @@ def get_model(
             model_type = "lladamoe"
         elif "llada" in base_model_path.lower():
             model_type = "llada"
+        elif "fast_dllm" in base_model_path.lower():
+            model_type = "fastdllm_v2"
 
     # Use custom loading logic for LLaDA to bypass AutoModel/AutoConfig registry issues
-    if model_type in ["llada", "lladamoe"]:
+    if model_type in ["llada", "lladamoe", "fastdllm_v2"]:
         is_custom = True
         if model_type == "llada":
             from dllm.pipelines.llada.models import LLaDAConfig, LLaDAModelLM
             config_cls, model_cls = LLaDAConfig, LLaDAModelLM
             modeling_file = "configuration_llada.py"
+        elif model_type == "fastdllm_v2":
+            from dllm.pipelines.fastdllm_v2.models.configuration_fastdllm import Fast_dLLM_QwenConfig
+            from dllm.pipelines.fastdllm_v2.models.modeling_fastdllm import Fast_dLLM_QwenForCausalLM
+            config_cls, model_cls = Fast_dLLM_QwenConfig, Fast_dLLM_QwenForCausalLM
+            modeling_file = "configuration_fastdllm.py"
         else:
             from dllm.pipelines.llada.models import LLaDAMoEConfig, LLaDAMoEModelLM
             config_cls, model_cls = LLaDAMoEConfig, LLaDAMoEModelLM
