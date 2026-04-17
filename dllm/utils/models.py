@@ -156,6 +156,7 @@ def get_model(
                     # Fallback to remote code if not registered yet
                     transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
                 print(f"✅ Rank 0: Config pre-fetch finished.", flush=True)
+            ps.wait_for_everyone()
 
     # --- Checkpoint Self-Containment and Type Detection ---
     is_custom = False

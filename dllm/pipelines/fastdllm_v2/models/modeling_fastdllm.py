@@ -37,7 +37,7 @@ class BaseModelOutputWithPastAndBlockCache(BaseModelOutputWithPast):
     block_past_key_values: Optional[Cache] = None
 
 
-@torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs")
+# @torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs")
 def fused_flex_attention(q, k, v, mask=None):
     return flex_attention(q, k, v, block_mask=mask, enable_gqa=True)
 
