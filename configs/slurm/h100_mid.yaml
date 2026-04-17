@@ -1,7 +1,7 @@
 # Slurm Resource Requests
 nodes: 1
 gpus_per_node: "h100:4"
-time: "03:00:00"
+time: "02:00:00"
 mem: "100G"
 cpus_per_task: 16
 ntasks_per_node: 1
@@ -9,5 +9,5 @@ output: "./.logs/%x-%j.out"
 error: "./.logs/%x-%j.err"
 requeue: true
 working_dir: "/scratch/jacopo04/dllm"
-account: "def-rudner"
+account: "aip-rudner"
 signal: "B:SIGTERM@360"

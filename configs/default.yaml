@@ -18,11 +18,11 @@ training:
     gradient_accumulation_steps: 8
     lr_scheduler_type: "linear"
     warmup_ratio: 0.1
-    max_grad_norm: 1.5
+    max_grad_norm: 2
   
   dataset:
     dataset: "tulu"
-    use_chat_template: True
+    use_chat_template: False
     mask_prompt_loss: True
   
   logging:
@@ -38,6 +38,7 @@ evaluation:
   batch_size: 32
   seed: 42
   distributed_timeout: 3600
+  apply_chat_template: False
   
   model_args:
     max_new_tokens: 512

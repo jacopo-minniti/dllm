@@ -3,12 +3,12 @@ evaluation:
   num_fewshot: 4
   
   model_args:
-    pretrained: ".models/LLaDA-8B-Base/tulu-3-sft-mixture/base-puma-bptt-cab/lr5e-05_bs256_puma-th0.15_bptt4_cab-b2048-e4096-mask-rl15-30/checkpoint-final"
+    pretrained: ".models/LLaDA-8B-Base/NuminaMath-CoT-LLaDA-Goldilocks/base-puma-bptt-cab/lr2e-05_bs256_puma-th0.15_bptt2_cab-b1024-e2048-rl17/checkpoint-200"
     
     use_cab: True
-    cab_size: large
-    read_layers: [[16, 31]] # base 1
-    injection: masked
+    cab_size: small
+    read_layers: 18 # base 1
+    injection: mask
 
     use_loopholing: True
     threshold: 0.15

@@ -1,9 +1,0 @@
-training:
-  mode: loophole_bptt
-  bptt: 2
-  read_layers: 16 # base 1
-  injection: masked
-  mlp_module: True
-  dataset: tulu
-  max_steps: 500
-  learning_rate: 2e-05
