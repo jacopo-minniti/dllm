@@ -25,7 +25,7 @@ from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 try:
     import triton
     HAS_TRITON = True
-except ImportError:
+except (ImportError, Exception):
     HAS_TRITON = False
 from einops import rearrange, repeat
 
