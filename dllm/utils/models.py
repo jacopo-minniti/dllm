@@ -185,8 +185,7 @@ def get_model(
             config_cls, model_cls = LLaDAConfig, LLaDAModelLM
             modeling_file = "configuration_llada.py"
         elif model_type == "fastdllm_v2":
-            from dllm.pipelines.fastdllm_v2.models.configuration_fastdllm import Fast_dLLM_QwenConfig
-            from dllm.pipelines.fastdllm_v2.models.modeling_fastdllm import Fast_dLLM_QwenForCausalLM
+            from dllm.pipelines.fastdllm_v2.models import Fast_dLLM_QwenConfig, Fast_dLLM_QwenForCausalLM
             config_cls, model_cls = Fast_dLLM_QwenConfig, Fast_dLLM_QwenForCausalLM
             modeling_file = "configuration_fastdllm.py"
         else:
