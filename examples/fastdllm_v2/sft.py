@@ -195,25 +195,10 @@ def train():
 
     # ----- Training --------------------------------------------------------------
     logger.info("Start training...")
-    # Fast dLLM utilizes the `151665` mask ID and handles noise masking internally inside its unified `forward` pass,
-    # so we don't apply puma or mlm loss collators here by default, but rather the standard causal LM loss or custom 
-    # internal loss (via `loss_type="puma"` etc). We keep the same Trainer pattern here.
-    if training_args.loss_type == "puma":
-        from dllm.pipelines.llada.trainer import PumaTrainer as Trainer
-        collate_fn = transformers.DataCollatorForTokenClassification(
-            tokenizer=tokenizer, padding="longest", max_length=data_args.max_length
-        )
-    elif training_args.loss_type == "puma_bptt":
-        from dllm.pipelines.llada.trainer import PumaBPTTTrainer as Trainer
-        collate_fn = transformers.DataCollatorForTokenClassification(
-            tokenizer=tokenizer, padding="longest", max_length=data_args.max_length
-        )
-    else:
-        # For base causal/MDM
-        from transformers import Trainer
-        collate_fn = transformers.DataCollatorForTokenClassification(
-            tokenizer=tokenizer, padding="longest", max_length=data_args.max_length
-        )
+    from dllm.core.trainers import MDLMTrainer as Trainer
+    collate_fn = transformers.DataCollatorForTokenClassification(
+        tokenizer=tokenizer, padding="longest", max_length=data_args.max_length
+    )
 
     trainer = Trainer(
         model=model,
