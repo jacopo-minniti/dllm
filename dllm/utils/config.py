@@ -76,7 +76,7 @@ def resolve_keywords(config: Any, keyword_map: Dict[str, Any]) -> Any:
                             expansion = shortcuts[k][v]
                             if isinstance(expansion, dict):
                                 for exp_k, exp_v in expansion.items():
-                                    new_dict[exp_k] = exp_v
+                                    new_dict[exp_k] = resolve_keywords(exp_v, keyword_map)
                             else:
                                 new_dict[k] = expansion
                             idx += 1

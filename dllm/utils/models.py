@@ -174,7 +174,7 @@ def get_model(
             model_type = "lladamoe"
         elif "llada" in base_model_path.lower():
             model_type = "llada"
-        elif "fast_dllm" in base_model_path.lower():
+        elif "fast_dllm" in base_model_path.lower() or "fast-dllm" in base_model_path.lower():
             model_type = "fastdllm_v2"
 
     # Use custom loading logic for LLaDA to bypass AutoModel/AutoConfig registry issues
