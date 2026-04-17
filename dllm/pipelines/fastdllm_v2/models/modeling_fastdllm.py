@@ -21,7 +21,7 @@ from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_u
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.utils import auto_docstring, can_return_tuple, logging
-from .configuration_fastdllm import Fast_dLLM_QwenConfig
+from .configuration import Fast_dLLM_QwenConfig
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 from einops import rearrange, repeat
 
@@ -37,7 +37,7 @@ class BaseModelOutputWithPastAndBlockCache(BaseModelOutputWithPast):
     block_past_key_values: Optional[Cache] = None
 
 
-# @torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs")
+@torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs")
 def fused_flex_attention(q, k, v, mask=None):
     return flex_attention(q, k, v, block_mask=mask, enable_gqa=True)
 

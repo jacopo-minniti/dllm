@@ -156,7 +156,6 @@ def get_model(
                     # Fallback to remote code if not registered yet
                     transformers.AutoConfig.from_pretrained(base_model_path, trust_remote_code=True)
                 print(f"✅ Rank 0: Config pre-fetch finished.", flush=True)
-            ps.wait_for_everyone()
 
     # --- Checkpoint Self-Containment and Type Detection ---
     is_custom = False
@@ -411,7 +410,6 @@ def get_tokenizer(
     is_bert_family = (model_cls and issubclass(model_cls, (BertPreTrainedModel, RobertaPreTrainedModel, ModernBertPreTrainedModel)))
     is_a2d_llama = (model_cls and issubclass(model_cls, A2DLlamaLMHeadModel))
     is_a2d_qwen = (model_cls and issubclass(model_cls, (A2DQwen2LMHeadModel, A2DQwen3LMHeadModel)))
-    is_fastdllm = (model_type == "fastdllm_v2")
 
     if is_llada:
         if tokenizer.mask_token is None:
@@ -434,13 +432,6 @@ def get_tokenizer(
 
 {% endif %}
 """
-    elif is_fastdllm:
-        if getattr(tokenizer, "mask_token_id", None) is None:
-            tokenizer.mask_token_id = 151665
-            tokenizer.mask_token = "|<MASK>|"
-        tokenizer.eot_token = "<|im_end|>"
-        if getattr(tokenizer, "eot_token_id", None) is None:
-            tokenizer.eot_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eot_token)
     elif is_llada_moe:
         if tokenizer.mask_token is None:
             tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
