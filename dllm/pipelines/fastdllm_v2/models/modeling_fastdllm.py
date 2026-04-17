@@ -21,8 +21,12 @@ from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_u
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.utils import auto_docstring, can_return_tuple, logging
-from .configuration_fastdllm import Fast_dLLM_QwenConfig
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
+try:
+    import triton
+    HAS_TRITON = True
+except ImportError:
+    HAS_TRITON = False
 from einops import rearrange, repeat
 
 logger = logging.get_logger(__name__)
@@ -37,9 +41,20 @@ class BaseModelOutputWithPastAndBlockCache(BaseModelOutputWithPast):
     block_past_key_values: Optional[Cache] = None
 
 
-@torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs")
+
+if HAS_TRITON:
+    @torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs")
+    def _compiled_flex(q, k, v, mask):
+        return flex_attention(q, k, v, block_mask=mask, enable_gqa=True)
+
 def fused_flex_attention(q, k, v, mask=None):
-    return flex_attention(q, k, v, block_mask=mask, enable_gqa=True)
+    if HAS_TRITON:
+        return _compiled_flex(q, k, v, mask)
+    else:
+        # Eager fallback: mask should be a materialized tensor here
+        # We assume gen_mask handled the materialization
+        return F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+
 
 def block_diff_mask(b, h, q_idx, kv_idx, block_size=None, n=None):
     """
@@ -584,9 +599,17 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
         return mask
 
     def gen_mask(self, seqlen, block_size, B, H):
-        mask = create_block_mask(
-            partial(block_diff_mask, block_size=block_size, n=seqlen),
-            B=B, H=H, Q_LEN=seqlen*2, KV_LEN=seqlen*2)
+        if HAS_TRITON:
+            mask = create_block_mask(
+                partial(block_diff_mask, block_size=block_size, n=seqlen),
+                B=B, H=H, Q_LEN=seqlen*2, KV_LEN=seqlen*2)
+        else:
+            # Materialize the mask manually
+            q_idx = torch.arange(seqlen * 2, device=self.embed_tokens.weight.device)
+            kv_idx = torch.arange(seqlen * 2, device=self.embed_tokens.weight.device)
+            mask = block_diff_mask(None, None, q_idx[:, None], kv_idx[None, :], block_size=block_size, n=seqlen)
+            # Expand to (B, H, L, L)
+            mask = mask.unsqueeze(0).unsqueeze(0).expand(B, H, -1, -1)
 
         return mask
 
