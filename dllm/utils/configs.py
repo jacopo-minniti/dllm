@@ -34,7 +34,7 @@ class ModelArguments:
     cab_mlp_expansion_dim: int = 512
     read_layer: list[int] = field(default_factory=lambda: [-1])
     read_layers: list[int] = field(default=None)
-    freeze_backbone: bool = False
+    freeze_backbone: bool = True
     cab_n_heads: int = 8
     cab_n_kv_heads: int = 4
     # --- model-level dropout ---
@@ -51,7 +51,7 @@ class ModelArguments:
             self.model_name_or_path, "BASE_MODELS_DIR"
         )
         # Fix: Forcing backbone dropouts to 0 when training CAB only, ensuring consistency with frozen weights.
-        if self.use_cab and not self.lora:
+        if self.use_cab and not self.lora and self.freeze_backbone:
              # logger.info("CAB mode detected: Forcing backbone dropouts to 0.0 for stability.")
              self.attention_dropout = 0.0
              self.residual_dropout = 0.0

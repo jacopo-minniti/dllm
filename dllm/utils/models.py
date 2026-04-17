@@ -301,17 +301,20 @@ def get_model(
 
     # --- Freeze backbone and only train CAB if requested ---
     if getattr(model_args, "use_cab", False) and not getattr(model_args, "lora", False):
-        print_main("❄️ CAB training detected. Freezing base model parameters...")
-        cab_params = []
-        for name, param in model.named_parameters():
-            if "cab" not in name:
-                param.requires_grad = False
-            else:
-                param.requires_grad = True
-                cab_params.append(name)
-        
-        if cab_params:
-            print_main(f"🔥 Training {len(cab_params)} CAB parameters (e.g., {cab_params[0]}...)")
+        if getattr(model_args, "freeze_backbone", True):
+            print_main("❄️ CAB training detected. Freezing base model parameters...")
+            cab_params = []
+            for name, param in model.named_parameters():
+                if "cab" not in name:
+                    param.requires_grad = False
+                else:
+                    param.requires_grad = True
+                    cab_params.append(name)
+            
+            if cab_params:
+                print_main(f"🔥 Training {len(cab_params)} CAB parameters (e.g., {cab_params[0]}...)")
+        else:
+            print_main("🔥 CAB training detected with FULL SFT. Backbone parameters remain unfrozen.")
 
         # ensure input require grads for checkpointing support
         if hasattr(model, "enable_input_require_grads"):

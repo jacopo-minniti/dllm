@@ -59,6 +59,7 @@ shortcuts:
   backbone:
     frozen:   { freeze_backbone: True }
     unfrozen: { freeze_backbone: False }
+    full:     { freeze_backbone: False }
   
   cab_size:
     small:  { cab_bottleneck_dim: 512,  cab_mlp_expansion_dim: 1024 }

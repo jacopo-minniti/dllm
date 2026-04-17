@@ -9,6 +9,7 @@ training:
     seed: 42
     ddp_find_unused_parameters: False
     loss_type: "puma_bptt"
+    freeze_backbone: True
     ddp_timeout: 43200
   
   hyperparameters:
