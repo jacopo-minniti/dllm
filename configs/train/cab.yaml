@@ -1,14 +1,12 @@
 training:
   mode: cab_all
   bptt: 2
-  cab_size: small
+  cab_size: medium
+  read_layers: 18
   injection: all
   dataset: tulu
-  use_chat_template: False
-  mask_prompt_loss: True
-  read_layer: [2]
-  learning_rate: 2e-05
+  epochs: medium
+  backbone: full
   hyperparameters:
-    per_device_train_batch_size: 2
+    per_device_train_batch_size: 4
     gradient_accumulation_steps: 4
-
