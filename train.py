@@ -123,6 +123,16 @@ def main():
         if len(exp_configs) > 1:
             slurm_cfg["job_name"] = f"{slurm_cfg['job_name']}_{idx}"
 
+        # --- Debug Verification ---
+        t_cfg = run_cfg.get("training", {})
+        print(f"DEBUG: Experiment {idx} Configuration:")
+        print(f"  > model_name_or_path: {t_cfg.get('model_name_or_path')}")
+        print(f"  > script_path: {t_cfg.get('script_path')}")
+        print(f"  > learning_rate: {t_cfg.get('learning_rate')}")
+        print(f"  > per_device_train_batch_size: {t_cfg.get('per_device_train_batch_size')}")
+        print(f"  > bptt_steps: {t_cfg.get('bptt_steps')}")
+        # --------------------------
+
         # 4b. Construct Slurm Directives
         slurm_directives = ["#!/bin/bash"]
         sbatch_map = {

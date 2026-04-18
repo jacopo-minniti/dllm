@@ -51,6 +51,9 @@ def resolve_keywords(config: Any, keyword_map: Dict[str, Any]) -> Any:
     """
     if isinstance(config, dict):
         new_dict = {}
+        # Track keys set by shortcuts so they aren't overwritten by original keys
+        expanded_keys = set()
+        
         # We use a copy of the items to avoid modification issues
         items = list(config.items())
         idx = 0
@@ -66,6 +69,7 @@ def resolve_keywords(config: Any, keyword_map: Dict[str, Any]) -> Any:
                     first_res = resolve_keywords({k: v[0]}, keyword_map)
                     for target_k in first_res.keys():
                         new_dict[target_k] = [resolve_keywords({k: item}, keyword_map).get(target_k) for item in v]
+                        expanded_keys.add(target_k)
                     idx += 1
                     continue
                 
@@ -77,8 +81,10 @@ def resolve_keywords(config: Any, keyword_map: Dict[str, Any]) -> Any:
                             if isinstance(expansion, dict):
                                 for exp_k, exp_v in expansion.items():
                                     new_dict[exp_k] = resolve_keywords(exp_v, keyword_map)
+                                    expanded_keys.add(exp_k)
                             else:
                                 new_dict[k] = expansion
+                                expanded_keys.add(k)
                             idx += 1
                             continue
                     except TypeError:
@@ -86,21 +92,23 @@ def resolve_keywords(config: Any, keyword_map: Dict[str, Any]) -> Any:
 
             # 2. Handle Layers (base 1 to base 0 conversion)
             if k in ["read_layers", "read_layer"] and v is not None:
-                # If they provide something like [1, 2], we convert to [0, 1]
-                if isinstance(v, list):
-                    new_dict[k] = [(x - 1 if isinstance(x, int) else x) for x in v]
-                elif isinstance(v, int):
-                    new_dict[k] = v - 1
-                else:
-                    new_dict[k] = v
+                if k not in expanded_keys:
+                    if isinstance(v, list):
+                        new_dict[k] = [(x - 1 if isinstance(x, int) else x) for x in v]
+                    elif isinstance(v, int):
+                        new_dict[k] = v - 1
+                    else:
+                        new_dict[k] = v
             
             # 3. Handle standard list-based matrix shorthand (nested resolution)
             elif isinstance(v, list):
-                new_dict[k] = [resolve_keywords(x, keyword_map) for x in v]
+                if k not in expanded_keys:
+                    new_dict[k] = [resolve_keywords(x, keyword_map) for x in v]
             
             # 4. Standard recursive resolution
             else:
-                new_dict[k] = resolve_keywords(v, keyword_map)
+                if k not in expanded_keys:
+                    new_dict[k] = resolve_keywords(v, keyword_map)
             
             idx += 1
         return new_dict
