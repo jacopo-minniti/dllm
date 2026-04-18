@@ -197,15 +197,22 @@ class MDLMTrainer(transformers.Trainer):
         return_outputs: bool = False,
         **kwargs,
     ):
-        # Workaround for DDP + BPTT: Set static graph to allow multiple forward passes
-        if "bptt" in self.args.loss_type and not hasattr(self, "_ddp_static_graph_set"):
+        # Workaround for DDP + BPTT + Checkpointing:
+        # 1. Disable checkpointing on the model if BPTT is unrolled and backbone is frozen
+        #    (savings are minimal when parameters are frozen, but it causes 'Internal Assert' in DDP reducer)
+        if "bptt" in self.args.loss_type and getattr(self.args, "freeze_backbone", False):
+            if hasattr(model, "gradient_checkpointing_disable"):
+                model.gradient_checkpointing_disable()
+            elif hasattr(model, "module") and hasattr(model.module, "gradient_checkpointing_disable"):
+                model.module.gradient_checkpointing_disable()
+
+        # 2. Use find_unused_parameters=True workaround if static_graph failed
+        if "bptt" in self.args.loss_type and not hasattr(self, "_ddp_setup_done"):
             _model = model
-            # Unwrap DDP if needed to find the internal method, though DDP itself usually exposes it
-            if hasattr(_model, "_set_static_graph"):
-                _model._set_static_graph()
-            elif hasattr(_model, "module") and hasattr(_model.module, "_set_static_graph"):
-                _model.module._set_static_graph()
-            self._ddp_static_graph_set = True
+            if hasattr(_model, "module"):
+                # DDP object
+                _model.find_unused_parameters = True
+            self._ddp_setup_done = True
 
         """
         Compute the masked diffusion language modeling loss.
