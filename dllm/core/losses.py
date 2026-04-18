@@ -131,7 +131,7 @@ class LoopholingBPTTLoss(nn.Module):
             if not masked_mask.any():
                 dummy_loss = 0.0 * logits.sum()
                 loss_terms.append(dummy_loss)
-                break
+                continue
             
             loss_t = F.cross_entropy(
                 logits.transpose(1, 2),
@@ -210,7 +210,7 @@ class LoopholingBPTTPumaLoss(nn.Module):
             if not masked_mask.any():
                 dummy_loss = 0.0 * logits.sum()
                 loss_terms.append(dummy_loss)
-                break
+                continue
             
             loss_t = F.cross_entropy(
                 logits.transpose(1, 2),
