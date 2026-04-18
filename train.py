@@ -230,7 +230,7 @@ if [ "$WORLD_SIZE" -gt 1 ]; then
     if [ "${{SLURM_NNODES:-1}}" -gt 1 ]; then
         LAUNCH_ARGS="$LAUNCH_ARGS --main_process_ip $MASTER_ADDR --main_process_port $MASTER_PORT --machine_rank \$SLURM_NODEID --rdzv_backend c10d"
     fi
-    if [[ "{acc_config}" == *"fsdp"* ]]; then LAUNCH_ARGS="$LAUNCH_ARGS --fsdp_transformer_layer_cls_to_wrap LLaDABlock"; fi
+    if [[ "{acc_config}" == *"fsdp"* ]]; then LAUNCH_ARGS="$LAUNCH_ARGS --fsdp_transformer_layer_cls_to_wrap LLaDABlock,Fast_dLLM_QwenDecoderLayer"; fi
 fi
 
 srun --label --ntasks-per-node=1 bash -c "accelerate launch $LAUNCH_ARGS --config_file \"{acc_config}\" \"{script_path}\" {train_args_str}"
