@@ -3,7 +3,7 @@ training:
     model: fast-dllm
     mode: cab_all
     backbone: frozen
-    read_layer: 18  # Uses layer 12 (resolves to index 11)
+    read_layer: 14
   
   hyperparameters:
     epochs: small
