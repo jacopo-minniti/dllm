@@ -1,0 +1,16 @@
+training:
+  core:
+    model: fast-dllm
+    mode: cab_all
+    backbone: frozen
+    read_layer: 12  # Uses layer 12 (resolves to index 11)
+  
+  hyperparameters:
+    epochs: small
+    cab_size: small
+    learning_rate: 1e-04
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 4
+  
+  dataset:
+    dataset: tulu
