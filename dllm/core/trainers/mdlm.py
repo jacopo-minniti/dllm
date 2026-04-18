@@ -310,29 +310,66 @@ class MDLMTrainer(transformers.Trainer):
                 # Use persistent row-wise streaming batch
                 if self.active_streaming_batch is None:
                     self.active_streaming_batch = StreamingBatch()
-                
+
                 # Evict finished rows and fill with current dataloader input
                 # Capacity should be batch_size * gradient_accumulation_steps to avoid discarding data
                 capacity = self.args.per_device_train_batch_size * self.args.gradient_accumulation_steps
                 inputs = self._preprocess_inputs(inputs)
-                
+
+                # --- DEBUG: incoming dataloader batch ---
+                from dllm.core.losses import _BPTT_DEBUG_STEP
+                _do_debug = ((_BPTT_DEBUG_STEP + 1) % 10 == 1)
+                if _do_debug:
+                    _dl_ids = inputs["input_ids"]
+                    _dl_labs = inputs["labels"]
+                    _dl_maskable = (_dl_labs != -100).sum().item()
+                    _dl_has_mask = (_dl_ids == self.processing_class.mask_token_id).sum().item()
+                    print(
+                        f"\n[TRAINER DEBUG] Incoming batch shape={tuple(_dl_ids.shape)}  "
+                        f"maskable_tokens={_dl_maskable}  "
+                        f"already_masked={_dl_has_mask}  "
+                        f"streaming_buf={'None' if self.active_streaming_batch.input_ids is None else f'capacity={self.active_streaming_batch.capacity} ready_to_evict={self.active_streaming_batch.ready_to_evict.sum().item() if self.active_streaming_batch.ready_to_evict is not None else None}'}",
+                        flush=True,
+                    )
+
                 # Filled slots from current mini-batch
                 slots = self.active_streaming_batch.evict_and_fill(
-                    inputs, 
+                    inputs,
                     self.processing_class.mask_token_id,
                     capacity=capacity
                 )
-                
-                # If no slots were ready to evict, we still must process 'batch_size' sequences 
+
+                if _do_debug:
+                    _buf_masked = (self.active_streaming_batch.input_ids == self.processing_class.mask_token_id).sum().item()
+                    _buf_maskable = (self.active_streaming_batch.labels != -100).sum().item()
+                    print(
+                        f"[TRAINER DEBUG] After evict_and_fill: "
+                        f"filled_slots={slots.tolist()}  "
+                        f"buf_total_masked={_buf_masked}  "
+                        f"buf_total_maskable={_buf_maskable}",
+                        flush=True,
+                    )
+
+                # If no slots were ready to evict, we still must process 'batch_size' sequences
                 # to maintain training throughput and memory usage matching baseline.
                 if len(slots) < self.args.per_device_train_batch_size:
                     # Pick remaining random slots from the buffer that are NOT ready to evict
                     needed = self.args.per_device_train_batch_size - len(slots)
                     extra_slots = self.active_streaming_batch.pick_random_slots(needed)
                     slots = torch.cat([slots, extra_slots]) if len(slots) > 0 else extra_slots
-                
+
+                if _do_debug:
+                    print(f"[TRAINER DEBUG] Final selected slots={slots.tolist()}", flush=True)
+
                 # Only run loss on selected slots (fixes OOM)
                 loss, outputs = self.loss_fn(model, self.active_streaming_batch, slots=slots)
+
+                if _do_debug:
+                    print(
+                        f"[TRAINER DEBUG] loss_fn returned loss={loss.item():.6f}  "
+                        f"loss.requires_grad={loss.requires_grad}",
+                        flush=True,
+                    )
                 
                 # Meter update for processed slots
                 with torch.no_grad():

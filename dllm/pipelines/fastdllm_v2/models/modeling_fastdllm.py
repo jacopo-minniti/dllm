@@ -446,11 +446,22 @@ class LoopholeModule(nn.Module):
         else:
             h = h_t
 
+        gamma = self.zero_bridge.gamma
+        beta = self.zero_bridge.beta
         h = self.zero_bridge(h)
-        
+
+        if getattr(self, '_debug_loophole', False):
+            print(
+                f"  [Loophole] h_t norm={h_t.norm().item():.4f}  "
+                f"zero_bridge gamma abs_mean={gamma.abs().mean().item():.6f}  "
+                f"beta abs_mean={beta.abs().mean().item():.6f}  "
+                f"post_zero_bridge norm={h.norm().item():.4f}",
+                flush=True,
+            )
+
         if self.mlp is not None:
             h = self.mlp["w2"](F.silu(self.mlp["w3"](h)) * self.mlp["w1"](h))
-            
+
         return h
 
 
@@ -880,10 +891,23 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
         **kwargs
     ) -> CausalLMOutputWithPastAndBlockCache:
 
-        if labels is not None and self.training:
-            # Check for mask token presence
+        if not hasattr(self, '_fwd_debug_count'):
+            self._fwd_debug_count = 0
+        self._fwd_debug_count += 1
+        _do_fwd_debug = (self._fwd_debug_count % 20 == 1)
+
+        if labels is not None and self.training and _do_fwd_debug:
             masks_in_input = (input_ids == mask_id).sum().item()
-            print(f"[DEBUG Model] Forward: training={self.training}, labels is not None, masks_in_input={masks_in_input}")
+            print(f"[DEBUG Model] Internal training forward: masks_in_input={masks_in_input}", flush=True)
+        elif h_t is not None and self.training and _do_fwd_debug:
+            # Called from BPTT loss (labels=None)
+            masks_in_input = (input_ids == mask_id).sum().item()
+            print(
+                f"[DEBUG Model] BPTT forward (labels=None): "
+                f"input_ids shape={tuple(input_ids.shape)}  masks_in_input={masks_in_input}  "
+                f"h_t shape={tuple(h_t.shape)}  h_t norm={h_t.norm().item():.4f}",
+                flush=True,
+            )
 
         if self.training and labels is not None:
             original_labels = labels.clone()
@@ -949,6 +973,17 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
         loss = None
         if labels is not None:
             loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
+
+        # Debug for BPTT calls (labels=None, training mode, h_t provided)
+        if labels is None and self.training and h_t is not None and _do_fwd_debug:
+            h_s_out = outputs.h_s
+            print(
+                f"  [Model out] logits shape={tuple(logits.shape)}  "
+                f"min={logits.min().item():.4f} max={logits.max().item():.4f} "
+                f"mean={logits.mean().item():.4f} std={logits.std().item():.4f}  "
+                f"h_s={'None' if h_s_out is None else f'shape={tuple(h_s_out.shape)} norm={h_s_out.norm().item():.4f}'}",
+                flush=True,
+            )
 
         return CausalLMOutputWithPastAndBlockCache(
             loss=loss,

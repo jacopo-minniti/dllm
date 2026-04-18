@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Any, Optional, Tuple
 
+_BPTT_DEBUG_STEP = 0  # global step counter for throttled debug printing
 
 SUPPORTED_CONFIDENCE_TYPES = {"top_prob", "prob_diff"}
 
@@ -190,13 +191,33 @@ class LoopholingBPTTPumaLoss(nn.Module):
         self.weighted_ce = weighted_ce
 
     def forward(self, model, streaming_batch, slots: Optional[torch.Tensor] = None, **kwargs):
+        global _BPTT_DEBUG_STEP
+        _BPTT_DEBUG_STEP += 1
+        do_debug = (_BPTT_DEBUG_STEP % 10 == 1)  # print every 10 steps
+
         batch = streaming_batch.get_batch(slots=slots)
-        input_ids = batch["input_ids"].clone() 
+        input_ids = batch["input_ids"].clone()
         labels = batch["labels"]
         attention_mask = batch.get("attention_mask")
         h_t = batch.get("h_t")
-        
+
         maskable_mask = labels != -100
+
+        if do_debug:
+            B, L = input_ids.shape
+            n_maskable = maskable_mask.sum().item()
+            n_masked = (input_ids == self.mask_token_id).sum().item()
+            label_vals = labels[maskable_mask] if n_maskable > 0 else torch.tensor([])
+            print(
+                f"\n[PUMA-BPTT DEBUG step={_BPTT_DEBUG_STEP}] "
+                f"batch shape=({B},{L})  "
+                f"maskable_tokens={n_maskable}  "
+                f"masked_tokens={n_masked}  "
+                f"h_t={'None' if h_t is None else f'shape={tuple(h_t.shape)} norm={h_t.norm().item():.4f}'}  "
+                f"label_sample={label_vals[:8].tolist() if len(label_vals) > 0 else '[]'}",
+                flush=True,
+            )
+
         # Collect stats
         stats = {
             "intervention_ratio": [],
@@ -211,12 +232,29 @@ class LoopholingBPTTPumaLoss(nn.Module):
         for t in range(self.num_steps):
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
 
+            if do_debug:
+                print(
+                    f"  [step t={t}] masked_mask.sum={masked_mask.sum().item()}  "
+                    f"input_ids unique={input_ids.unique().numel()} vals "
+                    f"(has_mask={( input_ids == self.mask_token_id).any().item()})",
+                    flush=True,
+                )
+
             # Forward pass
             outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
             final_outputs = outputs
-            
+
+            if do_debug:
+                print(
+                    f"  [step t={t}] logits shape={tuple(logits.shape)}  "
+                    f"logits min={logits.min().item():.4f} max={logits.max().item():.4f} "
+                    f"mean={logits.mean().item():.4f} std={logits.std().item():.4f}  "
+                    f"h_s={'None' if h_s is None else f'norm={h_s.norm().item():.4f}'}",
+                    flush=True,
+                )
+
             # Capture stats
             if getattr(outputs, "intervention_ratio", None) is not None:
                 stats["intervention_ratio"].append(outputs.intervention_ratio)
@@ -232,20 +270,33 @@ class LoopholingBPTTPumaLoss(nn.Module):
                 _logging.getLogger(__name__).warning(
                     f"PUMA-BPTT step {t}: zero masked tokens "
                     f"(mask_token_id={self.mask_token_id}, "
-                    f"input_ids masks={( input_ids == self.mask_token_id).sum().item()}, "
+                    f"input_ids masks={(input_ids == self.mask_token_id).sum().item()}, "
                     f"maskable={maskable_mask.sum().item()}). "
                     "Skipping loss for this step. If this persists, check dataset labels."
                 )
                 dummy_loss = 0.0 * logits.sum()
                 loss_terms.append(dummy_loss)
+                if do_debug:
+                    print(f"  [step t={t}] SKIPPED (no masked tokens) — dummy_loss appended", flush=True)
                 break
-            
+
             loss_t = F.cross_entropy(
                 logits.transpose(1, 2),
                 labels,
                 reduction="none",
                 ignore_index=-100
             )
+
+            if do_debug:
+                raw_loss_at_masked = loss_t[masked_mask]
+                print(
+                    f"  [step t={t}] raw CE at masked positions: "
+                    f"n={raw_loss_at_masked.numel()} "
+                    f"mean={raw_loss_at_masked.mean().item() if raw_loss_at_masked.numel() > 0 else 'N/A':.4f} "
+                    f"min={raw_loss_at_masked.min().item() if raw_loss_at_masked.numel() > 0 else 'N/A':.4f} "
+                    f"max={raw_loss_at_masked.max().item() if raw_loss_at_masked.numel() > 0 else 'N/A':.4f}",
+                    flush=True,
+                )
 
             if self.weighted_ce:
                 with torch.no_grad():
@@ -265,7 +316,10 @@ class LoopholingBPTTPumaLoss(nn.Module):
             # Original Puma BPTT: Per-token average over currently masked tokens in this step
             loss_t = (loss_t * masked_mask.float()).sum() / masked_mask.float().sum().clamp_min(1)
             loss_terms.append(loss_t)
-            
+
+            if do_debug:
+                print(f"  [step t={t}] loss_t={loss_t.item():.6f}", flush=True)
+
             # Update local state for next step in the BPTT unroll
             if t < self.num_steps - 1:
                 # Use same confidence-based sampling as PUMA to decide local unmasking
@@ -281,38 +335,58 @@ class LoopholingBPTTPumaLoss(nn.Module):
                         raise ValueError(
                             f"Unsupported confidence_type={self.confidence_type!r}"
                         )
-                    
+
                     # For each sequence in the micro-batch, unmask some portion based on threshold
                     # Use out-of-place update to avoid autograd version mismatch (indices are saved by Embedding)
                     new_input_ids = input_ids.clone()
+                    n_unmasked_this_step = 0
                     for b in range(input_ids.shape[0]):
                         m_i = masked_mask[b]
-                        if not m_i.any(): continue
+                        if not m_i.any():
+                            continue
                         u_i = u[b][m_i]
                         v, idxs = torch.sort(u_i, descending=False)
                         target_indices = torch.where(m_i)[0][idxs]
                         # simplified cumsum thresholding
                         unmask_sub = torch.cumsum(v, dim=-1) < self.threshold
-                        if not unmask_sub.any(): unmask_sub[0] = True
+                        if not unmask_sub.any():
+                            unmask_sub[0] = True
                         new_input_ids[b, target_indices[unmask_sub]] = labels[b, target_indices[unmask_sub]]
+                        n_unmasked_this_step += unmask_sub.sum().item()
                     input_ids = new_input_ids
 
-                h_t = h_s 
-        
+                if do_debug:
+                    print(
+                        f"  [step t={t}] unmasked {n_unmasked_this_step} tokens for next step "
+                        f"(threshold={self.threshold}); "
+                        f"remaining_masked={(input_ids == self.mask_token_id).sum().item()}",
+                        flush=True,
+                    )
+
+                h_t = h_s
+
         # Original Puma BPTT: Sum of step-wise averages
         total_loss = sum(loss_terms)
-        
+
+        if do_debug:
+            individual = [lt.item() if hasattr(lt, 'item') else float(lt) for lt in loss_terms]
+            print(
+                f"  [PUMA-BPTT] total_loss={total_loss.item():.6f}  "
+                f"step_losses={individual}",
+                flush=True,
+            )
+
         # Attach averaged stats to final outputs
         final_outputs.stats = {k: (sum(v)/len(v) if v else None) for k, v in stats.items()}
 
         # Update the persistent buffer with the final state from the loop
         with torch.no_grad():
             streaming_batch.update(
-                logits, 
-                threshold=self.threshold, 
+                logits,
+                threshold=self.threshold,
                 confidence_type=self.confidence_type,
                 h_s=h_s.detach() if h_s is not None else None,
-                slots=slots
+                slots=slots,
             )
-            
+
         return total_loss, final_outputs
