@@ -129,6 +129,12 @@ class LoopholingBPTTLoss(nn.Module):
                 stats["h_t_norm"].append(h_t.norm(p=2, dim=-1).mean().item())
 
             if not masked_mask.any():
+                if t == 0:
+                    raise ValueError(
+                        f"Detected zero masked tokens at BPTT step {t}. "
+                        f"mask_token_id={self.mask_token_id}, batch[input_ids] suggests no tokens match this ID. "
+                        "Check if your tokenizer is correctly configured for diffusion training."
+                    )
                 dummy_loss = 0.0 * logits.sum()
                 loss_terms.append(dummy_loss)
                 continue
@@ -208,6 +214,13 @@ class LoopholingBPTTPumaLoss(nn.Module):
                 stats["h_t_norm"].append(h_t.norm(p=2, dim=-1).mean().item())
 
             if not masked_mask.any():
+                if t == 0:
+                     raise ValueError(
+                        f"Detected zero masked tokens at BPTT Puma step {t}. "
+                        f"mask_token_id={self.mask_token_id}, input_ids has { (input_ids == self.mask_token_id).sum().item() } masks. "
+                        f"But maskable_mask (labels != -100) has { maskable_mask.sum().item() } positions. "
+                        "Intersection is empty. Check your dataset labels and mask token configuration."
+                    )
                 dummy_loss = 0.0 * logits.sum()
                 loss_terms.append(dummy_loss)
                 continue

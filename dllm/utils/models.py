@@ -436,7 +436,7 @@ def get_tokenizer(
     is_bert_family = (model_cls and issubclass(model_cls, (BertPreTrainedModel, RobertaPreTrainedModel, ModernBertPreTrainedModel)))
     is_a2d_llama = (model_cls and issubclass(model_cls, A2DLlamaLMHeadModel))
     is_a2d_qwen = (model_cls and issubclass(model_cls, (A2DQwen2LMHeadModel, A2DQwen3LMHeadModel)))
-    is_fast_dllm = (model_type == "Fast_dLLM_Qwen")
+    is_fast_dllm = (model_type == "Fast_dLLM_Qwen" or (model_name_or_path and "Fast_dLLM" in model_name_or_path))
 
     if is_llada:
         if tokenizer.mask_token is None:
