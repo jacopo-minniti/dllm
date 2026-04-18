@@ -707,6 +707,8 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
             attention_mask = structural_mask
 
         hidden_states = inputs_embeds
+        if torch.isnan(hidden_states).any():
+            print(f"[DEBUG Model] NaNs detected in inputs_embeds! mean={hidden_states.mean().item()}")
 
         # --- CAB / Loopholing injection at embedding level (matches LLaDA architecture) ---
         # Skip during fast-dLLM's internal block-diffusion training pass (labels is not None),
@@ -725,11 +727,15 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
                 if only_mask and mask_token_id is not None and input_ids is not None:
                     mask = (input_ids == mask_token_id).unsqueeze(-1)
                     delta = self.cab(hidden_states, h_t)
+                    if torch.isnan(delta).any():
+                        print(f"[DEBUG Model] NaNs detected in CAB delta! x mean={hidden_states.mean().item()}, h_t mean={h_t.mean().item()}")
                     intervention_ratio = (delta * mask).std().item() / hidden_states.std().clamp_min(1e-6).item()
                     gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
                     hidden_states = torch.where(mask, hidden_states + delta, hidden_states)
                 else:
                     delta = self.cab(hidden_states, h_t)
+                    if torch.isnan(delta).any():
+                        print(f"[DEBUG Model] NaNs detected in CAB delta (all)! x mean={hidden_states.mean().item()}, h_t mean={h_t.mean().item()}")
                     intervention_ratio = delta.std().item() / hidden_states.std().clamp_min(1e-6).item()
                     gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
                     hidden_states = hidden_states + delta
@@ -918,11 +924,17 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
         )
 
         hidden_states = outputs.last_hidden_state
+        if torch.isnan(hidden_states).any():
+            print(f"[DEBUG Model] NaNs detected in last_hidden_state! mean={hidden_states.mean().item()}")
+
         if self.training and labels is not None:
             hidden_states = hidden_states[:, :hidden_states.shape[1]//2, :]
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
+        
+        if torch.isnan(logits).any():
+            print(f"[DEBUG Model] NaNs detected in logits! mean={logits.mean().item()}")
 
         loss = None
         if labels is not None:
