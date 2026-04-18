@@ -306,6 +306,23 @@ class ZeroBridgeRMSNorm(nn.Module):
         self.beta = nn.Parameter(torch.full((size,), 0.001))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Guard: with low_cpu_mem_usage=True, parameters absent from the checkpoint
+        # may be uninitialized GPU memory (often inf in bfloat16). Detect and fix once.
+        if not getattr(self, '_params_verified', False):
+            bad = (~torch.isfinite(self.gamma)).any() or (~torch.isfinite(self.beta)).any()
+            if bad:
+                import warnings
+                warnings.warn(
+                    "ZeroBridgeRMSNorm: gamma or beta contain non-finite values "
+                    "(likely uninitialized GPU memory from low_cpu_mem_usage=True). "
+                    "Re-initializing to zero/0.001.",
+                    stacklevel=2,
+                )
+                with torch.no_grad():
+                    self.gamma.zero_()
+                    self.beta.fill_(0.001)
+            self._params_verified = True
+
         orig_dtype = x.dtype
         x = x.to(torch.float32)
         variance = x.pow(2).mean(-1, keepdim=True)
@@ -550,6 +567,13 @@ class Fast_dLLM_QwenPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, Fast_dLLM_QwenRMSNorm):
             module.weight.data.fill_(1.0)
+        elif isinstance(module, ZeroBridgeRMSNorm):
+            # With low_cpu_mem_usage=True, parameters absent from the checkpoint
+            # are left as uninitialised GPU memory (random garbage, often inf in
+            # bfloat16). Explicitly zero-init gamma and set beta to near-zero so
+            # the bridge starts as an identity transform.
+            nn.init.zeros_(module.gamma)
+            nn.init.constant_(module.beta, 0.001)
 
 
 class Fast_dLLM_QwenRotaryEmbedding(nn.Module):
