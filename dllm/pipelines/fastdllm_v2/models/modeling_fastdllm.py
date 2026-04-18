@@ -362,11 +362,22 @@ class CrossAttentionBridge(nn.Module):
     def forward(self, x: torch.Tensor, h_t: torch.Tensor) -> torch.Tensor:
         B, L, _ = x.shape
         _, S, _ = h_t.shape 
+        
+        # Check weights for NaNs periodically (only on main rank/first sequence to avoid noise)
+        if torch.isnan(self.w_down.weight).any():
+            print("[DEBUG CAB] w_down.weight has NaNs!")
+
         x_b = self.w_down(x)
         h_b = self.w_down_h(h_t)
 
+        if torch.isnan(x_b).any() or torch.isnan(h_b).any():
+             print(f"[DEBUG CAB] NaNs after w_down: x_b={torch.isnan(x_b).any()}, h_b={torch.isnan(h_b).any()}")
+
         x_norm = self.attn_norm_x(x_b)
         h_norm = self.attn_norm_h(h_b)
+
+        if torch.isnan(x_norm).any() or torch.isnan(h_norm).any():
+             print(f"[DEBUG CAB] NaNs after norms: x_norm={torch.isnan(x_norm).any()}, h_norm={torch.isnan(h_norm).any()}")
 
         q = self.w_q(x_norm).view(B, L, self.n_heads, self.head_dim).transpose(1, 2)
         k = self.w_k(h_norm).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
@@ -382,6 +393,9 @@ class CrossAttentionBridge(nn.Module):
         else:
             a = F.scaled_dot_product_attention(q, k, v, is_causal=False)
         
+        if torch.isnan(a).any():
+             print(f"[DEBUG CAB] NaNs after Attention!")
+        
         a = a.transpose(1, 2).contiguous().view(B, L, -1)
         a = self.w_out(a)
         
@@ -390,6 +404,9 @@ class CrossAttentionBridge(nn.Module):
         a_norm = self.mlp_norm(x_b)
         h_mlp = F.silu(self.w1(a_norm)) * self.w3(a_norm)
         x_b = x_b + self.w2(h_mlp)
+
+        if torch.isnan(x_b).any():
+             print(f"[DEBUG CAB] NaNs after MLP!")
 
         delta = self.w_up(self.zero_bridge(x_b))
         return delta
