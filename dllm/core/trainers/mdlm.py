@@ -132,6 +132,28 @@ class MDLMTrainer(transformers.Trainer):
                  "at slightly different times. Consider setting `max_steps` and ensuring your dataset is infinite."
              )
 
+    def _wrap_model(self, model, training=True, dataloader=None):
+        wrapped = super()._wrap_model(model, training=training, dataloader=dataloader)
+        # BPTT unrolls num_steps forward passes through the same parameters and
+        # sums the losses before a single backward(). DDP fires its gradient-ready
+        # hook once per forward, so each parameter is marked ready num_steps times,
+        # which DDP rejects. _set_static_graph() disables that check for graphs
+        # that are structurally identical across iterations.
+        #
+        # Reentrant gradient checkpointing compounds this: each checkpointed
+        # segment re-runs its forward during backward, re-triggering DDP hooks.
+        # Switching to non-reentrant checkpointing avoids that second trigger.
+        if "bptt" in self.args.loss_type:
+            if hasattr(wrapped, "_set_static_graph"):
+                wrapped._set_static_graph()
+            # Switch the underlying model to non-reentrant checkpointing
+            inner = wrapped.module if hasattr(wrapped, "module") else wrapped
+            if hasattr(inner, "gradient_checkpointing_enable"):
+                inner.gradient_checkpointing_enable(
+                    gradient_checkpointing_kwargs={"use_reentrant": False}
+                )
+        return wrapped
+
     def _preprocess_inputs(self, inputs):
         if self.right_shift_logits:
             labels = inputs.get("labels", None)
@@ -197,23 +219,6 @@ class MDLMTrainer(transformers.Trainer):
         return_outputs: bool = False,
         **kwargs,
     ):
-        # Workaround for DDP + BPTT + Checkpointing:
-        # 1. Disable checkpointing on the model if BPTT is unrolled and backbone is frozen
-        #    (savings are minimal when parameters are frozen, but it causes 'Internal Assert' in DDP reducer)
-        if "bptt" in self.args.loss_type and getattr(self.args, "freeze_backbone", False):
-            if hasattr(model, "gradient_checkpointing_disable"):
-                model.gradient_checkpointing_disable()
-            elif hasattr(model, "module") and hasattr(model.module, "gradient_checkpointing_disable"):
-                model.module.gradient_checkpointing_disable()
-
-        # 2. Use find_unused_parameters=True workaround if static_graph failed
-        if "bptt" in self.args.loss_type and not hasattr(self, "_ddp_setup_done"):
-            _model = model
-            if hasattr(_model, "module"):
-                # DDP object
-                _model.find_unused_parameters = True
-            self._ddp_setup_done = True
-
         """
         Compute the masked diffusion language modeling loss.
 
