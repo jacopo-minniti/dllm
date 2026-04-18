@@ -211,7 +211,8 @@ class Fast_dLLM_QwenAttention(nn.Module):
 
         cos, sin = position_embeddings
         # query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
-        if self.training:
+        is_complementary_training = self.training and query_states.shape[2] > cos.shape[1]
+        if is_complementary_training:
             #split q into two parts
             q_1 = query_states[:,:,:query_states.shape[2]//2]
             q_2 = query_states[:,:,query_states.shape[2]//2:]
@@ -247,7 +248,7 @@ class Fast_dLLM_QwenAttention(nn.Module):
                 key_states = torch.cat((past_key_value[self.layer_idx][0], key_states), dim=-2)
                 value_states = torch.cat((past_key_value[self.layer_idx][1], value_states), dim=-2)
 
-        if self.training:
+        if is_complementary_training:
             attn_output = fused_flex_attention(query_states, key_states, value_states, mask=attention_mask)
             attn_output = attn_output.transpose(1, 2).contiguous()
         else:
