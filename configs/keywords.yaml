@@ -28,10 +28,10 @@ shortcuts:
   # Evaluation Model Shortcuts (Sets name and evaluation script)
   eval_model:
     llada-8b:
-      model_name_or_path: "llada-8b"
+      model: "llada"
       script_path: "dllm/pipelines/llada/eval.py"
     fast-dllm:
-      model_name_or_path: "fast-dllm"
+      model: "fastdllm_v2"
       script_path: "dllm/pipelines/fastdllm_v2/eval.py"
   # Mode Shortcuts (Controls multiple intervention flags and loss_type)
   mode:
