@@ -301,11 +301,14 @@ def default_sft_map_fn(row, *, tokenizer, mask_prompt_loss: bool = True, use_cha
     labels = input_ids.copy()
     
     if mask_prompt_loss:
-        # We tokenize the prompt part to find its length
-        # NOTE: some tokenizers might tokenize "A\nB" differently than "A" + "\n" + "B"
-        # but for SFT this is usually acceptable.
-        prompt_tokenized = tokenizer(prompt_text + connector, add_special_tokens=True)
-        prompt_len = len(prompt_tokenized["input_ids"])
+        # Compute the prompt span without adding an EOS-equivalent special token to the
+        # prompt-only side. Using add_special_tokens=True here can overcount by one and
+        # accidentally mask the first response token, leaving only EOS supervised.
+        prompt_ids = tokenizer(prompt_text + connector, add_special_tokens=False)["input_ids"]
+        prompt_len = len(prompt_ids)
+        bos_id = getattr(tokenizer, "bos_token_id", None)
+        if bos_id is not None and input_ids and input_ids[0] == bos_id:
+            prompt_len += 1
         labels[:prompt_len] = [-100] * prompt_len
         return {
             "input_ids": input_ids,
