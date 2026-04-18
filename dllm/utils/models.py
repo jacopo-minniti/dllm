@@ -197,7 +197,10 @@ def get_model(
         if os.path.isdir(base_model_path) and not os.path.exists(os.path.join(base_model_path, modeling_file)):
             ps = PartialState()
             if ps.is_main_process:
-                model_src = os.path.join(os.path.dirname(os.path.dirname(__file__)), "pipelines/llada/models/")
+                # Correctly resolve the source directory based on model type
+                pipeline_name = "fastdllm_v2" if model_type == "fastdllm_v2" else "llada"
+                model_src = os.path.join(os.path.dirname(os.path.dirname(__file__)), f"pipelines/{pipeline_name}/models/")
+                
                 if os.path.exists(model_src):
                     print(f"Rank 0: Rescuing missing modeling files in {base_model_path} from {model_src}...", flush=True)
                     import shutil
@@ -423,15 +426,40 @@ def get_tokenizer(
         tokenizer.bos_token = tokenizer.pad_token
 
     # If model is not provided, return as-is
-    model_cfg = transformers.AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
+    try:
+        model_cfg = transformers.AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=False)
+    except Exception:
+        try:
+            model_cfg = transformers.AutoConfig.from_pretrained(model_name_or_path, trust_remote_code=True)
+        except Exception:
+            # Last resort: try to load it manually if it's one of our custom models
+            model_cfg = None
+            if "fast_dllm" in model_name_or_path.lower() or "fast-dllm" in model_name_or_path.lower():
+                from dllm.pipelines.fastdllm_v2.models import Fast_dLLM_QwenConfig
+                try:
+                    model_cfg = Fast_dLLM_QwenConfig.from_pretrained(model_name_or_path)
+                except Exception: pass
+            elif "llada" in model_name_or_path.lower():
+                 from dllm.pipelines.llada.models import LLaDAConfig
+                 try:
+                    model_cfg = LLaDAConfig.from_pretrained(model_name_or_path)
+                 except Exception: pass
+
     try:
         model_cls = transformers.AutoModel._model_mapping[type(model_cfg)]
     except (KeyError, AttributeError):
         # Fallback for local models not registered in AutoModel mapping
         model_cls = None
-        if getattr(model_cfg, "model_type", None) == "llada":
+        m_type = getattr(model_cfg, "model_type", None)
+        if m_type == "llada":
             from dllm.pipelines.llada.models.modeling_llada import LLaDAModelLM
             model_cls = LLaDAModelLM
+        elif m_type == "fastdllm_v2":
+            from dllm.pipelines.fastdllm_v2.models import Fast_dLLM_QwenForCausalLM
+            model_cls = Fast_dLLM_QwenForCausalLM
+        elif m_type == "lladamoe":
+            from dllm.pipelines.llada.models.modeling_lladamoe import LLaDAMoEModelLM
+            model_cls = LLaDAMoEModelLM
 
     # Identify model family to apply specific tokenizer customizations
     model_type = getattr(model_cfg, "model_type", None)
