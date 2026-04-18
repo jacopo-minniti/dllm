@@ -1,12 +1,12 @@
 training:
   mode: cab_all
   bptt: 2
-  cab_size: medium
-  read_layers: 18
+  cab_size: small
+  read_layers: 23
   injection: all
   dataset: tulu
-  epochs: medium
-  backbone: full
+  epochs: small
+  backbone: frozen
   hyperparameters:
-    per_device_train_batch_size: 4
+    per_device_train_batch_size: 2
     gradient_accumulation_steps: 4
