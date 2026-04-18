@@ -164,6 +164,9 @@ def main():
         
         task_slug, model_slug, checkpoint_name, params_slug, output_path = get_eval_naming(evaluation)
         
+        # Ensure results are saved to the calculated directory
+        evaluation["output_path"] = os.path.dirname(output_path)
+        
         eval_flags = []
         for k, v in evaluation.items():
             if k == "model_args":
