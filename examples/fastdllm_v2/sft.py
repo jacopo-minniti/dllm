@@ -199,24 +199,14 @@ def train():
     # so we don't apply puma or mlm loss collators here by default, but rather the standard causal LM loss or custom 
     # internal loss (via `loss_type="puma"` etc). We keep the same Trainer pattern here.
     bd_size = getattr(model.config, "bd_size", 32)
-    if training_args.loss_type == "puma":
-        from dllm.pipelines.llada.trainer import PumaTrainer as Trainer
-        collate_fn = transformers.DataCollatorForTokenClassification(
-            tokenizer=tokenizer, padding="longest", max_length=data_args.max_length, pad_to_multiple_of=bd_size
-        )
-    elif training_args.loss_type == "puma_bptt":
-        from dllm.pipelines.llada.trainer import PumaBPTTTrainer as Trainer
-        collate_fn = transformers.DataCollatorForTokenClassification(
-            tokenizer=tokenizer, padding="longest", max_length=data_args.max_length, pad_to_multiple_of=bd_size
-        )
-    else:
-        # For base causal/MDM
-        from transformers import Trainer
-        collate_fn = transformers.DataCollatorForTokenClassification(
-            tokenizer=tokenizer, padding="longest", max_length=data_args.max_length, pad_to_multiple_of=bd_size
-        )
+    collate_fn = transformers.DataCollatorForTokenClassification(
+        tokenizer=tokenizer, 
+        padding="longest", 
+        max_length=data_args.max_length, 
+        pad_to_multiple_of=bd_size
+    )
 
-    trainer = Trainer(
+    trainer = dllm.core.trainers.MDLMTrainer(
         model=model,
         processing_class=tokenizer,
         train_dataset=dataset["train"],
