@@ -277,12 +277,7 @@ def default_sft_map_fn(row, *, tokenizer, mask_prompt_loss: bool = True, use_cha
                 prompt_text = "\n\n".join(prompt_parts)
                 response_text = ""
 
-    # [DEBUG] Print what we found in the row when chat template is OFF or messages missing
-    if not (use_chat_template and "messages" in row):
-        print(f"\n[DEBUG] Raw Path - use_chat_template: {use_chat_template}")
-        print(f"[DEBUG] Keys available: {list(row.keys())}")
-        print(f"[DEBUG] Prompt found: '{prompt_text[:50]}...' (len: {len(prompt_text)})")
-        print(f"[DEBUG] Response found: '{response_text[:50]}...' (len: {len(response_text)})")
+    # (Debug prints removed to reduce log spam)
 
     # We append a newline or space separation
     connector = "\n" if prompt_text and response_text else ""
