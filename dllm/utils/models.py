@@ -309,15 +309,15 @@ def get_model(
     if getattr(model_args, "use_cab", False) and not getattr(model_args, "lora", False):
         if getattr(model_args, "freeze_backbone", True):
             print_main("❄️ CAB training detected. Freezing base model parameters...")
-            # Determine the first layer where CAB is active
-            min_read_layer = 0
+            # Determine the indices of CAB modules that are actually called in the forward pass
+            active_read_indices = []
             if hasattr(model, "model") and hasattr(model.model, "read_layers"):
-                min_read_layer = min(model.model.read_layers)
+                active_read_indices = model.model.read_layers
             elif hasattr(model.config, "read_layers") or hasattr(model.config, "read_layer"):
                 read_attr = getattr(model.config, "read_layers", getattr(model.config, "read_layer", [-1]))
-                read_layers = read_attr if isinstance(read_attr, list) else [read_attr]
+                active_read_indices = read_attr if isinstance(read_attr, list) else [read_attr]
                 n_layers = getattr(model.config, "num_hidden_layers", 28)
-                min_read_layer = min([l if l >= 0 else n_layers + l for l in read_layers])
+                active_read_indices = [l if l >= 0 else n_layers + l for l in active_read_indices]
 
             cab_params = []
             unused_cab_count = 0
@@ -328,9 +328,10 @@ def get_model(
                     is_unused_cab = False
                     parts = name.split(".")
                     try:
+                        # Logic for modeling_fastdllm: module at index 'idx' corresponds to layer 'idx'
                         if "cab_modules" in parts:
                             layer_idx = int(parts[parts.index("cab_modules") + 1])
-                            if layer_idx < min_read_layer:
+                            if layer_idx not in active_read_indices:
                                 is_unused_cab = True
                     except (ValueError, IndexError):
                         pass
@@ -343,7 +344,7 @@ def get_model(
                         cab_params.append(name)
             
             if unused_cab_count > 0:
-                print_main(f"🔇 Froze {unused_cab_count} unused CAB parameter tensors (before layer {min_read_layer}).")
+                print_main(f"🔇 Froze {unused_cab_count} unused CAB parameter tensors (outside active indices {active_read_indices}).")
             if cab_params:
                 print_main(f"🔥 Training {len(cab_params)} CAB parameters (e.g., {cab_params[0]}...)")
         else:
