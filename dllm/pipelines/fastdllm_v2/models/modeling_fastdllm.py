@@ -646,7 +646,7 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
-            if self.training:
+            if self.training and labels is not None:
                 cache_position = torch.arange(
                     past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1]//2, device=inputs_embeds.device
                 )
@@ -658,19 +658,19 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
                     )
                 else:
                     cache_position = torch.arange(
-                        past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1] if not self.training else inputs_embeds.shape[1]//2, device=inputs_embeds.device
+                        past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1] if not (self.training and labels is not None) else inputs_embeds.shape[1]//2, device=inputs_embeds.device
                     )
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
         
-        if self.training:
+        if self.training and labels is not None:
             attention_mask = self.gen_mask(labels.shape[1], self.bd_size, labels.shape[0], self.config.num_attention_heads).to(device=inputs_embeds.device)
         else:
             if use_block_cache and block_past_key_values.get_seq_length() != 0:
                 attention_mask = None
             else:
-                attention_mask = self.eval_mask(input_ids.shape[1], block_size, past_key_values.get_seq_length() if past_key_values is not None else 0).to(device=inputs_embeds.device)
+                attention_mask = self.eval_mask(inputs_embeds.shape[1], block_size, past_key_values.get_seq_length() if past_key_values is not None else 0).to(device=inputs_embeds.device)
 
         hidden_states = inputs_embeds
 
