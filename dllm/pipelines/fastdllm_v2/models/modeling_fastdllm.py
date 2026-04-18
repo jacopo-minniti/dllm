@@ -772,7 +772,7 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
         **kwargs
     ) -> CausalLMOutputWithPastAndBlockCache:
 
-        if self.training:
+        if self.training and labels is not None:
             original_labels = labels.clone()
             original_input_ids = input_ids.clone()
 
@@ -825,7 +825,7 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
         )
 
         hidden_states = outputs.last_hidden_state
-        if self.training:
+        if self.training and labels is not None:
             hidden_states = hidden_states[:, :hidden_states.shape[1]//2, :]
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
