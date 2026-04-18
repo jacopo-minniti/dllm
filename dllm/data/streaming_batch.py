@@ -117,9 +117,11 @@ class StreamingBatch:
             self.labels[target_slots] = new_labels
             self.masked_mutable[target_slots] = maskable_mask
             
-            # Reset latent state for these slots
+            # Reset latent state for these slots with small noise to avoid RMSNorm zero-variance issues
             if self.h_t is not None:
-                self.h_t[target_slots] = 0.0
+                # Use same initialization scale as model: hidden_size**-0.5
+                std = self.h_t.shape[-1] ** -0.5
+                self.h_t[target_slots] = torch.randn_like(self.h_t[target_slots]) * std
             
             for k, v in batch.items():
                 if k not in ["input_ids", "labels"] and k in self.metadata and isinstance(v, torch.Tensor):

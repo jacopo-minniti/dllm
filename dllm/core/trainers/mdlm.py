@@ -197,6 +197,16 @@ class MDLMTrainer(transformers.Trainer):
         return_outputs: bool = False,
         **kwargs,
     ):
+        # Workaround for DDP + BPTT: Set static graph to allow multiple forward passes
+        if "bptt" in self.args.loss_type and not hasattr(self, "_ddp_static_graph_set"):
+            _model = model
+            # Unwrap DDP if needed to find the internal method, though DDP itself usually exposes it
+            if hasattr(_model, "_set_static_graph"):
+                _model._set_static_graph()
+            elif hasattr(_model, "module") and hasattr(_model.module, "_set_static_graph"):
+                _model.module._set_static_graph()
+            self._ddp_static_graph_set = True
+
         """
         Compute the masked diffusion language modeling loss.
 

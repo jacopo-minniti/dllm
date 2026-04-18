@@ -310,8 +310,7 @@ class ZeroBridgeRMSNorm(nn.Module):
         x = x.to(torch.float32)
         variance = x.pow(2).mean(-1, keepdim=True)
         x = x * torch.rsqrt(variance + self.eps)
-        x = x.to(orig_dtype)
-        return self.gamma * x + self.beta
+        return (self.gamma * x + self.beta).to(orig_dtype)
 
 class CABRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
@@ -324,7 +323,7 @@ class CABRMSNorm(nn.Module):
         hidden_states = hidden_states.to(torch.float32)
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states.to(input_dtype)
+        return (self.weight * hidden_states).to(input_dtype)
 
 class CrossAttentionBridge(nn.Module):
     def __init__(self, config):
@@ -358,26 +357,28 @@ class CrossAttentionBridge(nn.Module):
         rms_eps = getattr(config, "rms_norm_eps", 1e-6)
         self.zero_bridge = ZeroBridgeRMSNorm(size=d_b, eps=rms_eps)
         self.w_up = nn.Linear(d_b, d_model, bias=False)
+        
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        std = getattr(self.config, "initializer_range", 0.02)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=std)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+        nn.init.zeros_(self.zero_bridge.gamma)
+        nn.init.constant_(self.zero_bridge.beta, 0.001)
 
     def forward(self, x: torch.Tensor, h_t: torch.Tensor) -> torch.Tensor:
         B, L, _ = x.shape
         _, S, _ = h_t.shape 
         
-        # Check weights for NaNs periodically (only on main rank/first sequence to avoid noise)
-        if torch.isnan(self.w_down.weight).any():
-            print("[DEBUG CAB] w_down.weight has NaNs!")
-
         x_b = self.w_down(x)
         h_b = self.w_down_h(h_t)
 
-        if torch.isnan(x_b).any() or torch.isnan(h_b).any():
-             print(f"[DEBUG CAB] NaNs after w_down: x_b={torch.isnan(x_b).any()}, h_b={torch.isnan(h_b).any()}")
-
         x_norm = self.attn_norm_x(x_b)
         h_norm = self.attn_norm_h(h_b)
-
-        if torch.isnan(x_norm).any() or torch.isnan(h_norm).any():
-             print(f"[DEBUG CAB] NaNs after norms: x_norm={torch.isnan(x_norm).any()}, h_norm={torch.isnan(h_norm).any()}")
 
         q = self.w_q(x_norm).view(B, L, self.n_heads, self.head_dim).transpose(1, 2)
         k = self.w_k(h_norm).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
@@ -393,9 +394,6 @@ class CrossAttentionBridge(nn.Module):
         else:
             a = F.scaled_dot_product_attention(q, k, v, is_causal=False)
         
-        if torch.isnan(a).any():
-             print(f"[DEBUG CAB] NaNs after Attention!")
-        
         a = a.transpose(1, 2).contiguous().view(B, L, -1)
         a = self.w_out(a)
         
@@ -404,9 +402,6 @@ class CrossAttentionBridge(nn.Module):
         a_norm = self.mlp_norm(x_b)
         h_mlp = F.silu(self.w1(a_norm)) * self.w3(a_norm)
         x_b = x_b + self.w2(h_mlp)
-
-        if torch.isnan(x_b).any():
-             print(f"[DEBUG CAB] NaNs after MLP!")
 
         delta = self.w_up(self.zero_bridge(x_b))
         return delta
@@ -434,6 +429,15 @@ class LoopholeModule(nn.Module):
                 "w2": nn.Linear(config.hidden_size, config.hidden_size, bias=False),
                 "w3": nn.Linear(config.hidden_size, config.hidden_size, bias=False),
             })
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        std = getattr(self.config, "initializer_range", 0.02)
+        if self.mlp is not None:
+            for m in self.mlp.values():
+                nn.init.normal_(m.weight, std=std)
+        nn.init.zeros_(self.zero_bridge.gamma)
+        nn.init.constant_(self.zero_bridge.beta, 0.001)
 
     def forward(self, h_t: torch.Tensor) -> torch.Tensor:
         if self.multi_layer_gate is not None and h_t.ndim == 4:
@@ -724,8 +728,6 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
             attention_mask = structural_mask
 
         hidden_states = inputs_embeds
-        if torch.isnan(hidden_states).any():
-            print(f"[DEBUG Model] NaNs detected in inputs_embeds! mean={hidden_states.mean().item()}")
 
         # --- CAB / Loopholing injection at embedding level (matches LLaDA architecture) ---
         # Skip during fast-dLLM's internal block-diffusion training pass (labels is not None),
@@ -744,15 +746,11 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
                 if only_mask and mask_token_id is not None and input_ids is not None:
                     mask = (input_ids == mask_token_id).unsqueeze(-1)
                     delta = self.cab(hidden_states, h_t)
-                    if torch.isnan(delta).any():
-                        print(f"[DEBUG Model] NaNs detected in CAB delta! x mean={hidden_states.mean().item()}, h_t mean={h_t.mean().item()}")
                     intervention_ratio = (delta * mask).std().item() / hidden_states.std().clamp_min(1e-6).item()
                     gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
                     hidden_states = torch.where(mask, hidden_states + delta, hidden_states)
                 else:
                     delta = self.cab(hidden_states, h_t)
-                    if torch.isnan(delta).any():
-                        print(f"[DEBUG Model] NaNs detected in CAB delta (all)! x mean={hidden_states.mean().item()}, h_t mean={h_t.mean().item()}")
                     intervention_ratio = delta.std().item() / hidden_states.std().clamp_min(1e-6).item()
                     gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
                     hidden_states = hidden_states + delta
@@ -941,8 +939,6 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
         )
 
         hidden_states = outputs.last_hidden_state
-        if torch.isnan(hidden_states).any():
-            print(f"[DEBUG Model] NaNs detected in last_hidden_state! mean={hidden_states.mean().item()}")
 
         if self.training and labels is not None:
             hidden_states = hidden_states[:, :hidden_states.shape[1]//2, :]
@@ -950,9 +946,6 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
         
-        if torch.isnan(logits).any():
-            print(f"[DEBUG Model] NaNs detected in logits! mean={logits.mean().item()}")
-
         loss = None
         if labels is not None:
             loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs)
