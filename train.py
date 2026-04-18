@@ -68,9 +68,6 @@ def main():
     if "training" in base_run_cfg:
         base_run_cfg["training"] = flatten_config_dict(base_run_cfg["training"])
     
-    # Resolve keywords in the base config
-    base_run_cfg = resolve_keywords(base_run_cfg, keyword_map)
-
     # 3. Handle CLI Overwrites (Apply to base before expansion)
     i = 0
     while i < len(extra_args):
@@ -100,6 +97,9 @@ def main():
                 if "training" not in base_run_cfg: base_run_cfg["training"] = {}
                 base_run_cfg["training"][key] = val
         i += 1
+
+    # Resolve keywords in the base config after all CLI overrides are applied
+    base_run_cfg = resolve_keywords(base_run_cfg, keyword_map)
 
     # 4. Expand Matrix of Experiments
     try:
