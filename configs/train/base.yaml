@@ -1,6 +1,6 @@
 training:
   core:
-    model: llada8b
+    model: llada-8b
     mode: base
     backbone: unfrozen
   
