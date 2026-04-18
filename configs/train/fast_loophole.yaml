@@ -1,9 +1,10 @@
 training:
   core:
     model: fast-dllm
-    mode: base
+    mode: loophole_bptt
     backbone: unfrozen
     epochs: small
+    bptt: 2
   
   hyperparameters:
     learning_rate: 2e-05
