@@ -671,14 +671,40 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        if attention_mask is None:
-            if self.training and labels is not None:
-                attention_mask = self.gen_mask(labels.shape[1], self.bd_size, labels.shape[0], self.config.num_attention_heads).to(device=inputs_embeds.device)
+        # Compute the structural mask (causality/block-causality)
+        if self.training and labels is not None:
+            structural_mask = self.gen_mask(labels.shape[1], self.bd_size, labels.shape[0], self.config.num_attention_heads).to(device=inputs_embeds.device)
+        else:
+            if use_block_cache and block_past_key_values.get_seq_length() != 0:
+                structural_mask = None
             else:
-                if use_block_cache and block_past_key_values.get_seq_length() != 0:
-                    attention_mask = None
-                else:
-                    attention_mask = self.eval_mask(inputs_embeds.shape[1], block_size, past_key_values.get_seq_length() if past_key_values is not None else 0).to(device=inputs_embeds.device)
+                structural_mask = self.eval_mask(inputs_embeds.shape[1], block_size, past_key_values.get_seq_length() if past_key_values is not None else 0).to(device=inputs_embeds.device)
+                if structural_mask is not None and not isinstance(structural_mask, torch.Tensor):
+                    # Handle BlockMask if needed, but for SDPA we want a tensor
+                    pass
+                elif structural_mask is not None and structural_mask.ndim == 2:
+                    structural_mask = structural_mask.unsqueeze(0).unsqueeze(0)
+
+        if attention_mask is not None:
+            # Handle padding mask from external caller (e.g. PUMA)
+            if attention_mask.dtype != torch.bool:
+                attention_mask = attention_mask.bool()
+            
+            # Expand (B, L) -> (B, 1, 1, L)
+            if attention_mask.ndim == 2:
+                attention_mask = attention_mask[:, None, None, :]
+            
+            if structural_mask is not None:
+                # Combine structural mask with padding mask
+                # Note: if structural_mask is a flex_attention BlockMask, this will fail,
+                # but SDPA branch (where this usually happens) uses tensors.
+                try:
+                    attention_mask = structural_mask & attention_mask
+                except Exception:
+                    # Fallback to structural mask if combination fails (e.g. BlockMask)
+                    attention_mask = structural_mask
+        else:
+            attention_mask = structural_mask
 
         hidden_states = inputs_embeds
 
