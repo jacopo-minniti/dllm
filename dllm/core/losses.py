@@ -61,7 +61,7 @@ class PumaLoss(nn.Module):
         h_t = batch.get("h_t")
         
         # Forward pass
-        outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t)
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
         logits = outputs.logits
         h_s = getattr(outputs, "h_s", None)
         
@@ -128,7 +128,7 @@ class LoopholingBPTTLoss(nn.Module):
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
 
             # Forward pass
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t)
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
             
@@ -212,7 +212,7 @@ class LoopholingBPTTPumaLoss(nn.Module):
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
 
             # Forward pass
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t)
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
             final_outputs = outputs

@@ -244,6 +244,7 @@ def get_model(
             "attention_dropout": getattr(model_args, "attention_dropout", None),
             "residual_dropout": getattr(model_args, "residual_dropout", None),
             "embedding_dropout": getattr(model_args, "embedding_dropout", None),
+            "mask_token_id": 151665 if is_fast_dllm else None,
         }
         for field_name, value in custom_fields.items():
             if value is not None:
