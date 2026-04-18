@@ -460,13 +460,21 @@ def get_tokenizer(
 {% endif %}
 """
     elif is_fast_dllm:
-        if tokenizer.mask_token is None:
-            # For Fast-dLLM v2, the mask token ID is typically 151665
-            tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
+        # For Fast-dLLM v2, the mask token ID is hardcoded to 151665 in pre-training
+        mask_id = 151665
+        # Check if 151665 is already in vocab (it should be for Qwen-based Fast-dLLM)
+        existing_token = tokenizer.convert_ids_to_tokens(mask_id)
         
-        # Ensure mask_token_id is explicitly set if it didn't auto-resolve
-        if tokenizer.mask_token_id is None:
-            tokenizer.mask_token_id = 151665
+        if existing_token != tokenizer.unk_token and existing_token is not None:
+            tokenizer.mask_token = existing_token
+            tokenizer.mask_token_id = mask_id
+            print_main(f"✅ Fast-dLLM detected: Using existing mask token '{existing_token}' at ID {mask_id}")
+        else:
+            if tokenizer.mask_token is None:
+                tokenizer.add_special_tokens({"mask_token": "<|mask|>"})
+            if tokenizer.mask_token_id is None:
+                tokenizer.mask_token_id = mask_id
+            print_main(f"⚠️ Fast-dLLM: Mask token not found at {mask_id}. Added/Registered '{tokenizer.mask_token}' at ID {tokenizer.mask_token_id}")
             
         tokenizer.eot_token = "<|im_end|>"
         tokenizer.eot_token_id = tokenizer.convert_tokens_to_ids(tokenizer.eot_token)

@@ -239,14 +239,19 @@ def default_sft_map_fn(row, *, tokenizer, mask_prompt_loss: bool = True, use_cha
         labels = tokenized.copy()
 
         if mask_prompt_loss:
+            # Mask everything before the last assistant message
+            # We find the prompt length by tokenizing everything EXCEPT the last message
             prompt_tokens = tokenizer.apply_chat_template(
                 row["messages"][:-1], tokenize=True, add_generation_prompt=True
             )
-            labels[: len(prompt_tokens)] = [-100] * len(prompt_tokens)
+            # Ensure we don't mask everything. At least the last response token must be trainable.
+            prompt_len = min(len(prompt_tokens), len(tokenized) - 1)
+            
+            labels[:prompt_len] = [-100] * prompt_len
             return {
                 "input_ids": tokenized,
                 "labels": labels,
-                "prompt_len": len(prompt_tokens),
+                "prompt_len": prompt_len,
             }
         return {"input_ids": tokenized, "labels": labels}
 

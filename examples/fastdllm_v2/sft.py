@@ -138,8 +138,8 @@ def train():
     # 3. Handle Mapping/Processing
     import hashlib
     # Generate a unique hash for this dataset configuration to allow sharing across experiments
-    # This prevents re-tokenizing the same dataset when only training hyperparams (LR, BS) change.
-    cache_id = f"{data_args.dataset}_{data_args.use_chat_template}_{data_args.mask_prompt_loss}_{model_args.model_name_or_path}"
+    # Added 'v2' salt to force re-processing after fixing the prompt-masking logic
+    cache_id = f"v2_{data_args.dataset}_{data_args.use_chat_template}_{data_args.mask_prompt_loss}_{model_args.model_name_or_path}"
     cache_hash = hashlib.md5(cache_id.encode()).hexdigest()
     processed_cache_path = os.path.join(".cache", "processed_datasets", cache_hash)
     
