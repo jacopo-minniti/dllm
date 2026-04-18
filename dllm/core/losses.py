@@ -218,6 +218,13 @@ class LoopholingBPTTPumaLoss(nn.Module):
                 flush=True,
             )
 
+        # Activate per-layer NaN detection on the underlying model for the first few steps
+        _inner_model = model
+        while hasattr(_inner_model, 'module'):
+            _inner_model = _inner_model.module
+        _base_model = getattr(_inner_model, 'model', _inner_model)
+        _base_model._nan_debug_active = (_BPTT_DEBUG_STEP <= 3)
+
         # Collect stats
         stats = {
             "intervention_ratio": [],

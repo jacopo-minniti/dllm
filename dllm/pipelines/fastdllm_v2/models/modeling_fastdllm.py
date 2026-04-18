@@ -747,6 +747,32 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
         gamma_mean = None
         _in_internal_training = self.training and labels is not None
 
+        # NaN detection helper (only active in BPTT path)
+        _do_nan_debug = not _in_internal_training and getattr(self, '_nan_debug_active', False)
+        def _nan_check(tag, t):
+            if _do_nan_debug and torch.is_tensor(t) and torch.isnan(t).any():
+                print(
+                    f"  [NaN DETECTED at '{tag}'] "
+                    f"shape={tuple(t.shape)} "
+                    f"nan_count={torch.isnan(t).sum().item()} "
+                    f"inf_count={torch.isinf(t).sum().item()} "
+                    f"dtype={t.dtype}",
+                    flush=True,
+                )
+
+        if _do_nan_debug:
+            _nan_check("embeddings", hidden_states)
+            attn_mask_for_debug = attention_mask if isinstance(attention_mask, torch.Tensor) else None
+            n_false = (attn_mask_for_debug == False).sum().item() if attn_mask_for_debug is not None else "N/A"
+            n_true  = (attn_mask_for_debug == True).sum().item()  if attn_mask_for_debug is not None else "N/A"
+            print(
+                f"  [NaN debug] embed norm={hidden_states.norm().item():.4f}  "
+                f"attn_mask shape={'N/A' if attn_mask_for_debug is None else tuple(attn_mask_for_debug.shape)}  "
+                f"True={n_true} False={n_false}  "
+                f"h_t={'None' if h_t is None else f'norm={h_t.norm().item():.4f}'}",
+                flush=True,
+            )
+
         if not _in_internal_training and (self.use_cab or self.use_loopholing):
             only_mask = getattr(self.config, "only_mask_tokens", False)
             mask_token_id = getattr(self.config, "mask_token_id", None)
@@ -786,13 +812,29 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
                     gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
                     hidden_states = hidden_states + delta
 
+                if _do_nan_debug:
+                    _nan_check("after_loophole_delta", delta)
+                    _nan_check("after_loophole_hidden", hidden_states)
+                    print(
+                        f"  [NaN debug] loophole delta norm={delta.norm().item():.6f}  "
+                        f"hidden post-loophole norm={hidden_states.norm().item():.4f}  "
+                        f"gamma abs_mean={self.loophole.zero_bridge.gamma.abs().mean().item():.6f}  "
+                        f"beta abs_mean={self.loophole.zero_bridge.beta.abs().mean().item():.6f}",
+                        flush=True,
+                    )
+
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
+
+        if _do_nan_debug:
+            _nan_check("rotary_cos", position_embeddings[0])
+            _nan_check("rotary_sin", position_embeddings[1])
 
         # Collect hidden states at read_layers for h_s assembly
         read_layers_set = set(self.read_layers) if (self.use_cab or self.use_loopholing) else set()
         collected_h_s = {}
 
+        _first_nan_layer = None
         for idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             hidden_states = decoder_layer(
                 hidden_states,
@@ -808,10 +850,21 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
                 replace_position=replace_position,
                 **kwargs,
             )
+            if _do_nan_debug and _first_nan_layer is None and torch.isnan(hidden_states).any():
+                _first_nan_layer = idx
+                print(
+                    f"  [NaN FIRST] appeared after decoder layer {idx}  "
+                    f"nan_count={torch.isnan(hidden_states).sum().item()}  "
+                    f"norm={hidden_states[~torch.isnan(hidden_states)].norm().item():.4f}",
+                    flush=True,
+                )
             if idx in read_layers_set and not _in_internal_training:
                 collected_h_s[idx] = hidden_states
 
         hidden_states = self.norm(hidden_states)
+
+        if _do_nan_debug and _first_nan_layer is not None:
+            _nan_check("post_final_norm", hidden_states)
 
         # Assemble h_s (cross-step memory for next denoising step)
         h_s = None
