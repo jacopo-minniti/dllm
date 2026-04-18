@@ -29,6 +29,8 @@ except (ImportError, Exception):
     HAS_TRITON = False
 from einops import rearrange, repeat
 
+from .configuration_fastdllm import Fast_dLLM_QwenConfig
+
 logger = logging.get_logger(__name__)
 
 
