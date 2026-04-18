@@ -229,6 +229,9 @@ def get_model(
             # Last resort fallback if everything else fails
             check_config = config
 
+    # Identify model family for custom logic
+    is_fast_dllm = (model_type == "fastdllm_v2" or (base_model_path and "Fast_dLLM" in base_model_path))
+
     # Propagate all custom settings to the config object strictly
     if check_config is not None:
         custom_fields = {
