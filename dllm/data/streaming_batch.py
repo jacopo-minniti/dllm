@@ -157,14 +157,11 @@ class StreamingBatch:
                 top2_probs, _ = torch.topk(probs, k=2, dim=-1)
                 conf = top2_probs[..., 0] - top2_probs[..., 1]
                 uncertainty = 1.0 - conf
-            elif confidence_type == "entropy":
-                # entropy = -sum(p * log(p))
-                # Normalized uncertainty: high entropy -> high uncertainty
-                ent = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
-                uncertainty = ent
             else:
-                max_probs, _ = probs.max(dim=-1)
-                uncertainty = 1.0 - max_probs
+                raise ValueError(
+                    f"Unsupported confidence_type={confidence_type!r}. "
+                    "Supported values: top_prob, prob_diff."
+                )
             
             for k, i in enumerate(slots.tolist()):
                 u_i = uncertainty[k]

@@ -144,3 +144,5 @@ test.py
 .prev_evals/
 .prev_models/
 .agents/
+/*.md
+!/README.md

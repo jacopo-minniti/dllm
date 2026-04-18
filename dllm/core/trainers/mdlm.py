@@ -33,7 +33,7 @@ class MDLMConfig(TrainingArguments):
     loss_type: str = "mlm"  # "mlm", "puma", "bptt", "puma_bptt"
     puma_threshold: float = 0.15
     bptt_steps: int = 2
-    confidence_type: str = "top_prob" # "top_prob", "entropy", "prob_diff"
+    confidence_type: str = "top_prob" # "top_prob", "prob_diff"
     weighted_ce: bool = False
 
 
@@ -51,6 +51,11 @@ class MDLMTrainer(transformers.Trainer):
 
         if not (0.0 < args.time_epsilon < 1.0):
             raise ValueError("time_epsilon must be in (0, 1)")
+        if args.confidence_type not in {"top_prob", "prob_diff"}:
+            raise ValueError(
+                f"Unsupported confidence_type={args.confidence_type!r}. "
+                "Supported values: top_prob, prob_diff."
+            )
 
         self.scheduler = scheduler if scheduler is not None else LinearAlphaScheduler()
         self.time_epsilon = args.time_epsilon

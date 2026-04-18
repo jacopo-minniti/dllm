@@ -3,6 +3,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Any, Optional, Tuple
 
+
+SUPPORTED_CONFIDENCE_TYPES = {"top_prob", "prob_diff"}
+
+
+def _validate_confidence_type(confidence_type: str) -> None:
+    if confidence_type not in SUPPORTED_CONFIDENCE_TYPES:
+        supported = ", ".join(sorted(SUPPORTED_CONFIDENCE_TYPES))
+        raise ValueError(
+            f"Unsupported confidence_type={confidence_type!r}. "
+            f"Supported values: {supported}."
+        )
+
+
 class MLMLoss(nn.Module):
     def __init__(self, mask_token_id: int):
         super().__init__()
@@ -28,13 +41,14 @@ class MLMLoss(nn.Module):
         )
         
         # Original MLM: Global sequence mean (including zero loss at unmasked/ignored positions)
-        loss = (loss * masked_mask.float()).sum() / input_ids.numel()
+        loss = (loss * maskable_mask.float()).sum() / input_ids.numel()
         
         return loss, outputs
 
 class PumaLoss(nn.Module):
     def __init__(self, mask_token_id: int, threshold: float = 0.15, confidence_type: str = "top_prob"):
         super().__init__()
+        _validate_confidence_type(confidence_type)
         self.mask_token_id = mask_token_id
         self.threshold = threshold
         self.confidence_type = confidence_type
@@ -129,15 +143,14 @@ class LoopholingBPTTLoss(nn.Module):
                 stats["h_t_norm"].append(h_t.norm(p=2, dim=-1).mean().item())
 
             if not masked_mask.any():
-                if t == 0:
-                    raise ValueError(
-                        f"Detected zero masked tokens at BPTT step {t}. "
-                        f"mask_token_id={self.mask_token_id}, batch[input_ids] suggests no tokens match this ID. "
-                        "Check if your tokenizer is correctly configured for diffusion training."
-                    )
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    f"BPTT step {t}: zero masked tokens (mask_token_id={self.mask_token_id}). "
+                    "Skipping loss for this step. If this persists, check dataset labels."
+                )
                 dummy_loss = 0.0 * logits.sum()
                 loss_terms.append(dummy_loss)
-                continue
+                break
             
             loss_t = F.cross_entropy(
                 logits.transpose(1, 2),
@@ -169,6 +182,7 @@ class LoopholingBPTTLoss(nn.Module):
 class LoopholingBPTTPumaLoss(nn.Module):
     def __init__(self, mask_token_id: int, threshold: float = 0.15, num_steps: int = 2, confidence_type: str = "top_prob", weighted_ce: bool = False):
         super().__init__()
+        _validate_confidence_type(confidence_type)
         self.mask_token_id = mask_token_id
         self.threshold = threshold
         self.num_steps = num_steps
@@ -214,16 +228,17 @@ class LoopholingBPTTPumaLoss(nn.Module):
                 stats["h_t_norm"].append(h_t.norm(p=2, dim=-1).mean().item())
 
             if not masked_mask.any():
-                if t == 0:
-                     raise ValueError(
-                        f"Detected zero masked tokens at BPTT Puma step {t}. "
-                        f"mask_token_id={self.mask_token_id}, input_ids has { (input_ids == self.mask_token_id).sum().item() } masks. "
-                        f"But maskable_mask (labels != -100) has { maskable_mask.sum().item() } positions. "
-                        "Intersection is empty. Check your dataset labels and mask token configuration."
-                    )
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    f"PUMA-BPTT step {t}: zero masked tokens "
+                    f"(mask_token_id={self.mask_token_id}, "
+                    f"input_ids masks={( input_ids == self.mask_token_id).sum().item()}, "
+                    f"maskable={maskable_mask.sum().item()}). "
+                    "Skipping loss for this step. If this persists, check dataset labels."
+                )
                 dummy_loss = 0.0 * logits.sum()
                 loss_terms.append(dummy_loss)
-                continue
+                break
             
             loss_t = F.cross_entropy(
                 logits.transpose(1, 2),
@@ -240,14 +255,10 @@ class LoopholingBPTTPumaLoss(nn.Module):
                     elif self.confidence_type == "prob_diff":
                         top2_probs, _ = torch.topk(probs, k=2, dim=-1)
                         conf = top2_probs[..., 0] - top2_probs[..., 1]
-                    elif self.confidence_type == "entropy":
-                        import math
-                        ent = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
-                        # Normalize entropy over [0, 1] relative to vocab size, keeping confidence semantics (1 = certain)
-                        v_size = logits.shape[-1]
-                        conf = 1.0 - (ent / math.log(v_size)).clamp(min=0.0, max=1.0)
                     else:
-                        conf = probs.max(dim=-1)[0]
+                        raise ValueError(
+                            f"Unsupported confidence_type={self.confidence_type!r}"
+                        )
                     weights = 1.0 + conf
                 loss_t = loss_t * weights
 
@@ -266,10 +277,10 @@ class LoopholingBPTTPumaLoss(nn.Module):
                     elif self.confidence_type == "prob_diff":
                         top2, _ = torch.topk(probs, k=2, dim=-1)
                         u = 1.0 - (top2[..., 0] - top2[..., 1])
-                    elif self.confidence_type == "entropy":
-                        u = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
                     else:
-                        u = 1.0 - probs.max(dim=-1)[0]
+                        raise ValueError(
+                            f"Unsupported confidence_type={self.confidence_type!r}"
+                        )
                     
                     # For each sequence in the micro-batch, unmask some portion based on threshold
                     # Use out-of-place update to avoid autograd version mismatch (indices are saved by Embedding)

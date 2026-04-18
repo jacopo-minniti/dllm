@@ -328,14 +328,16 @@ def get_model(
                     is_unused_cab = False
                     parts = name.split(".")
                     try:
-                        # Logic for modeling_fastdllm: module at index 'idx' corresponds to layer 'idx'
-                        if "cab_modules" in parts:
+                        # Active CAB modules are those at layers >= min(read_layers).
+                        # They receive h_t from read_states accumulated up to that point.
+                        # Layers before the first read_layer never see any read_states and are never called.
+                        if "cab_modules" in parts and active_read_indices:
                             layer_idx = int(parts[parts.index("cab_modules") + 1])
-                            if layer_idx not in active_read_indices:
+                            if layer_idx < min(active_read_indices):
                                 is_unused_cab = True
                     except (ValueError, IndexError):
                         pass
-                    
+
                     if is_unused_cab:
                         param.requires_grad = False
                         unused_cab_count += 1

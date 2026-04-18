@@ -106,15 +106,22 @@ def post_process_dataset(
     elif data_args.truncation == "right":
         # do this only if dataset has "prompt_len"
         if "prompt_len" in dataset.column_names["train"]:
+            # Strict less-than: prompt_len == max_length means zero response tokens after clipping
             dataset = dataset.filter(
-                lambda row: row["prompt_len"] <= data_args.max_length,
+                lambda row: row["prompt_len"] < data_args.max_length,
                 num_proc=None,
-                desc=f"Filtering samples with `prompt_len` <= {data_args.max_length}",
+                desc=f"Filtering samples with `prompt_len` < {data_args.max_length}",
             )
-        return dataset.map(
+        dataset = dataset.map(
             lambda row: clip_row(row, data_args.max_length, truncation="right"),
             num_proc=None, # Disable multiprocessing here to avoid fork/NCCL conflicts
             desc=f"Right-truncating samples to max_length={data_args.max_length}",
+        )
+        # Drop any remaining samples where all labels are -100 (no training signal)
+        return dataset.filter(
+            lambda row: any(l != -100 for l in row.get("labels", [-100])),
+            num_proc=None,
+            desc="Filtering samples with no training signal (all labels=-100)",
         )
     else:
         raise NotImplementedError

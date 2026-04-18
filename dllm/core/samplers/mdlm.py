@@ -32,7 +32,7 @@ class MDLMSamplerConfig(BaseSamplerConfig):
     begin_suppress_tokens: list[int] | None = None
     right_shift_logits: bool = False
     threshold: float = 0.0  # PUMA threshold (0.0 means use fixed steps/scheduler)
-    confidence_type: str = "top_prob"  # "top_prob", "entropy", "prob_diff"
+    confidence_type: str = "top_prob"  # "top_prob", "prob_diff"
 
 
 @dataclass
@@ -310,12 +310,11 @@ class MDLMSampler(BaseSampler):
                     conf = top2_probs[..., 0] - top2_probs[..., 1]
                     x0_p = conf
                     uncertainty = 1.0 - conf
-                elif confidence_type == "entropy":
-                    ent = -torch.sum(p * torch.log(p + 1e-10), dim=-1)
-                    x0_p = -ent # confidence is inverse entropy for topk
-                    uncertainty = ent
                 else:
-                    raise NotImplementedError(confidence_type)
+                    raise ValueError(
+                        f"Unsupported confidence_type={confidence_type!r}. "
+                        "Supported values: top_prob, prob_diff."
+                    )
 
                 # Restrict selection window to the *current block's* tail region
                 for j in range(B):

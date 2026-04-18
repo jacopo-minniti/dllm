@@ -37,10 +37,16 @@ logger = logging.get_logger(__name__)
 @dataclass
 class CausalLMOutputWithPastAndBlockCache(CausalLMOutputWithPast):
     block_past_key_values: Optional[Cache] = None
+    h_s: Optional[torch.FloatTensor] = None
+    intervention_ratio: Optional[float] = None
+    gamma_mean: Optional[float] = None
 
 @dataclass
 class BaseModelOutputWithPastAndBlockCache(BaseModelOutputWithPast):
     block_past_key_values: Optional[Cache] = None
+    h_s: Optional[torch.FloatTensor] = None
+    intervention_ratio: Optional[float] = None
+    gamma_mean: Optional[float] = None
 
 
 
@@ -567,19 +573,18 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
         # --- Intervention: Read Variables (CAB/Loophole) ---
         self.use_cab = getattr(config, "use_cab", False)
         self.use_loopholing = getattr(config, "use_loopholing", False)
-        
+
         if self.use_cab or self.use_loopholing:
-            read_layer = getattr(config, "read_layer", [-1])
-            self.read_layers = read_layer if isinstance(read_layer, list) else [read_layer]
+            # Support both read_layers (plural, preferred) and read_layer (singular, legacy)
+            read_layers = getattr(config, "read_layers", None) or getattr(config, "read_layer", [-1])
+            self.read_layers = read_layers if isinstance(read_layers, list) else [read_layers]
             self.read_layers = [l if l >= 0 else config.num_hidden_layers + l for l in self.read_layers]
-            
+
             if self.use_loopholing:
                 self.loophole = LoopholeModule(config)
-            
+
             if self.use_cab:
-                self.cab_modules = nn.ModuleList([
-                    CrossAttentionBridge(config) for _ in range(config.num_hidden_layers)
-                ])
+                self.cab = CrossAttentionBridge(config)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -631,6 +636,7 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
         use_block_cache: Optional[bool] = False,
         block_past_key_values: Optional[Cache] = None,
         replace_position: Optional[int] = None,
+        h_t: Optional[torch.FloatTensor] = None,
         **kwargs
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -664,7 +670,7 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
-        
+
         if self.training and labels is not None:
             attention_mask = self.gen_mask(labels.shape[1], self.bd_size, labels.shape[0], self.config.num_attention_heads).to(device=inputs_embeds.device)
         else:
@@ -675,22 +681,60 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
 
         hidden_states = inputs_embeds
 
+        # --- CAB / Loopholing injection at embedding level (matches LLaDA architecture) ---
+        # Skip during fast-dLLM's internal block-diffusion training pass (labels is not None),
+        # where the sequence is already doubled to [x_t || x0] and h_t is not meaningful.
+        intervention_ratio = None
+        gamma_mean = None
+        _in_internal_training = self.training and labels is not None
+
+        if not _in_internal_training and (self.use_cab or self.use_loopholing):
+            only_mask = getattr(self.config, "only_mask_tokens", False)
+            mask_token_id = getattr(self.config, "mask_token_id", None)
+
+            if self.use_cab:
+                if h_t is None:
+                    h_t = torch.randn_like(hidden_states) * (hidden_states.shape[-1] ** -0.5)
+                if only_mask and mask_token_id is not None and input_ids is not None:
+                    mask = (input_ids == mask_token_id).unsqueeze(-1)
+                    delta = self.cab(hidden_states, h_t)
+                    intervention_ratio = (delta * mask).std().item() / hidden_states.std().clamp_min(1e-6).item()
+                    gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
+                    hidden_states = torch.where(mask, hidden_states + delta, hidden_states)
+                else:
+                    delta = self.cab(hidden_states, h_t)
+                    intervention_ratio = delta.std().item() / hidden_states.std().clamp_min(1e-6).item()
+                    gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
+                    hidden_states = hidden_states + delta
+
+            elif self.use_loopholing:
+                if h_t is None:
+                    h_t = torch.randn_like(hidden_states) * (hidden_states.shape[-1] ** -0.5)
+                if only_mask and mask_token_id is not None and input_ids is not None:
+                    mask = (input_ids == mask_token_id).unsqueeze(-1)
+                    h_t_masked = h_t
+                    if h_t.ndim == 4:
+                        h_t_masked = h_t * mask.unsqueeze(1)
+                    else:
+                        h_t_masked = h_t * mask
+                    delta = self.loophole(h_t_masked)
+                    intervention_ratio = (delta * mask).std().item() / hidden_states.std().clamp_min(1e-6).item()
+                    gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                    hidden_states = torch.where(mask, hidden_states + delta, hidden_states)
+                else:
+                    delta = self.loophole(h_t)
+                    intervention_ratio = delta.std().item() / hidden_states.std().clamp_min(1e-6).item()
+                    gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                    hidden_states = hidden_states + delta
+
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
-        read_states = []
+        # Collect hidden states at read_layers for h_s assembly
+        read_layers_set = set(self.read_layers) if (self.use_cab or self.use_loopholing) else set()
+        collected_h_s = {}
 
         for idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
-            # Optional: Read State Gathering
-            if (self.use_cab or self.use_loopholing) and idx in self.read_layers:
-                read_states.append(hidden_states)
-
-            # Optional: CAB Injection
-            if self.use_cab and len(read_states) > 0:
-                h_t = torch.stack(read_states, dim=1) if len(read_states) > 1 else read_states[0]
-                delta = self.cab_modules[idx](hidden_states, h_t)
-                hidden_states = hidden_states + delta
-                
             hidden_states = decoder_layer(
                 hidden_states,
                 attention_mask=attention_mask,
@@ -705,18 +749,32 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
                 replace_position=replace_position,
                 **kwargs,
             )
-
-        # Optional: Loophole processing
-        if self.use_loopholing and len(read_states) > 0:
-            h_t = torch.stack(read_states, dim=1) if len(read_states) > 1 else read_states[0]
-            delta = self.loophole(h_t)
-            hidden_states = hidden_states + delta
+            if idx in read_layers_set and not _in_internal_training:
+                collected_h_s[idx] = hidden_states
 
         hidden_states = self.norm(hidden_states)
+
+        # Assemble h_s (cross-step memory for next denoising step)
+        h_s = None
+        if (self.use_cab or self.use_loopholing) and not _in_internal_training:
+            h_s_list = [collected_h_s[idx] for idx in self.read_layers if idx in collected_h_s]
+            if not h_s_list:
+                h_s = hidden_states
+            elif len(h_s_list) == 1:
+                h_s = h_s_list[0]
+            else:
+                if self.use_cab:
+                    h_s = torch.cat(h_s_list, dim=1)
+                else:
+                    h_s = torch.stack(h_s_list, dim=1)
+
         return BaseModelOutputWithPastAndBlockCache(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
             block_past_key_values=block_past_key_values if use_block_cache else None,
+            h_s=h_s,
+            intervention_ratio=intervention_ratio,
+            gamma_mean=gamma_mean,
         )
 
 
@@ -770,6 +828,7 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
         block_past_key_values: Optional[Cache] = None,
         replace_position: Optional[int] = None,
         mask_id: Optional[int] = 151665,
+        h_t: Optional[torch.FloatTensor] = None,
         **kwargs
     ) -> CausalLMOutputWithPastAndBlockCache:
 
@@ -822,6 +881,7 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
             use_block_cache=use_block_cache,
             block_past_key_values=block_past_key_values,
             replace_position=replace_position,
+            h_t=h_t,
             **kwargs,
         )
 
@@ -843,6 +903,9 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
             hidden_states=hidden_states,
             attentions=outputs.attentions,
             block_past_key_values=outputs.block_past_key_values,
+            h_s=outputs.h_s,
+            intervention_ratio=outputs.intervention_ratio,
+            gamma_mean=outputs.gamma_mean,
         )
 
     @torch.no_grad()

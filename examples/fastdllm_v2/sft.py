@@ -139,7 +139,7 @@ def train():
     import hashlib
     # Generate a unique hash for this dataset configuration to allow sharing across experiments
     # Added 'v2' salt to force re-processing after fixing the prompt-masking logic
-    cache_id = f"v2_{data_args.dataset}_{data_args.use_chat_template}_{data_args.mask_prompt_loss}_{model_args.model_name_or_path}"
+    cache_id = f"v3_{data_args.dataset}_{data_args.use_chat_template}_{data_args.mask_prompt_loss}_{model_args.model_name_or_path}"
     cache_hash = hashlib.md5(cache_id.encode()).hexdigest()
     processed_cache_path = os.path.join(".cache", "processed_datasets", cache_hash)
     
@@ -199,11 +199,13 @@ def train():
     # so we don't apply puma or mlm loss collators here by default, but rather the standard causal LM loss or custom 
     # internal loss (via `loss_type="puma"` etc). We keep the same Trainer pattern here.
     bd_size = getattr(model.config, "bd_size", 32)
+    # Use max_length padding so the StreamingBatch (which fixes seq_len at init)
+    # always sees consistent-length tensors across all batches.
     collate_fn = transformers.DataCollatorForTokenClassification(
-        tokenizer=tokenizer, 
-        padding="longest", 
-        max_length=data_args.max_length, 
-        pad_to_multiple_of=bd_size
+        tokenizer=tokenizer,
+        padding="max_length",
+        max_length=data_args.max_length,
+        pad_to_multiple_of=bd_size,
     )
 
     trainer = dllm.core.trainers.MDLMTrainer(
