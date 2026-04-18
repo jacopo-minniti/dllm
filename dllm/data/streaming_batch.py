@@ -23,6 +23,11 @@ class StreamingBatch:
         """
         Cold start: Initialize storage headers from the first batch and prime it.
         """
+        if mask_token_id is None:
+            raise ValueError(
+                "StreamingBatch requires a valid `mask_token_id`, but found None. "
+                "Ensure your tokenizer has a mask token configured (common for diffusion models like LLaDA or Fast-dLLM)."
+            )
         batch_size, self.seq_len = batch["input_ids"].shape
         self.capacity = capacity if capacity is not None else batch_size
         device = batch["input_ids"].device
