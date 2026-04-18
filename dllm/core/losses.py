@@ -217,6 +217,13 @@ class LoopholingBPTTPumaLoss(nn.Module):
             h_s = getattr(outputs, "h_s", None)
             final_outputs = outputs
             
+            # DEBUG
+            if t == 0:
+                print(f"[DEBUG Loss] Step {t}: masked_mask.sum={masked_mask.sum().item()}, maskable_mask.sum={maskable_mask.sum().item()}, input_ids.masks={(input_ids == self.mask_token_id).sum().item()}")
+                print(f"[DEBUG Loss] Step {t}: logits mean={logits.mean().item()}, std={logits.std().item()}")
+                # Check if labels are all -100
+                print(f"[DEBUG Loss] Step {t}: labels != -100 count={(labels != -100).sum().item()}")
+
             # Capture stats
             if getattr(outputs, "intervention_ratio", None) is not None:
                 stats["intervention_ratio"].append(outputs.intervention_ratio)

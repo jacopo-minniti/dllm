@@ -859,6 +859,11 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
         **kwargs
     ) -> CausalLMOutputWithPastAndBlockCache:
 
+        if labels is not None and self.training:
+            # Check for mask token presence
+            masks_in_input = (input_ids == mask_id).sum().item()
+            print(f"[DEBUG Model] Forward: training={self.training}, labels is not None, masks_in_input={masks_in_input}")
+
         if self.training and labels is not None:
             original_labels = labels.clone()
             original_input_ids = input_ids.clone()
