@@ -110,8 +110,17 @@ def load_peft(
     ):
         target_modules = target_modules[0]
     modules_to_save = (
-        model_args.modules_to_save.split(",") if model_args.modules_to_save else None
+        model_args.modules_to_save.split(",") if model_args.modules_to_save else []
     )
+    # Automatically include custom (non-LoRA) modules so their weights are saved inside the
+    # adapter checkpoint and loaded back correctly at eval time.  Without this, trained
+    # loophole/CAB weights are silently discarded when PEFT writes the adapter file.
+    # Paths are relative to the CausalLM wrapper (e.g. Fast_dLLM_QwenForCausalLM): model.{attr}.
+    if getattr(model_args, "use_loopholing", False):
+        modules_to_save.append("model.loophole")
+    if getattr(model_args, "use_cab", False):
+        modules_to_save.append("model.cab")
+    modules_to_save = list(dict.fromkeys(modules_to_save)) or None  # dedupe; None if empty
     peft_config = peft.LoraConfig(
         r=model_args.r,
         target_modules=target_modules,

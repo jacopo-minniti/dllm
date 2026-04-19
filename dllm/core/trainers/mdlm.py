@@ -15,11 +15,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import transformers
+from accelerate import PartialState
 
 from ..schedulers import BaseAlphaScheduler, LinearAlphaScheduler
 from dllm.utils.configs import TrainingArguments
 from dllm.utils.data import prepend_bos
-from .utils import NLLMetric, PPLMetric, StatsMetric, OnEvaluateMetricsCallback, WandbAlertCallback, SlurmCheckpointCallback
+from .utils import NLLMetric, PPLMetric, StatsMetric, OnEvaluateMetricsCallback, WandbAlertCallback, SlurmCheckpointCallback, ModelingFilesSyncCallback
 from ..losses import MLMLoss, PumaLoss, LoopholingBPTTLoss, LoopholingBPTTPumaLoss
 from dllm.data.streaming_batch import StreamingBatch
 
@@ -78,6 +79,12 @@ class MDLMTrainer(transformers.Trainer):
         self.add_callback(self.meter)
         self.add_callback(WandbAlertCallback())
         self.add_callback(SlurmCheckpointCallback())
+
+        # Ensure every checkpoint directory is self-contained by copying the pipeline's
+        # modeling .py files alongside the weights at save time (training time responsibility).
+        model_type = getattr(getattr(self.model, "config", None), "model_type", None)
+        if model_type:
+            self.add_callback(ModelingFilesSyncCallback(model_type))
 
         # Registry of loss functions
         self.loss_fns = {
@@ -153,6 +160,21 @@ class MDLMTrainer(transformers.Trainer):
                     gradient_checkpointing_kwargs={"use_reentrant": False}
                 )
         return wrapped
+
+    def save_model(self, output_dir: str | None = None, **kwargs):
+        """Save model weights then copy pipeline modeling .py files into the same directory.
+
+        The callback covers intermediate checkpoints (on_save).  This override covers the
+        explicit trainer.save_model("checkpoint-final") call at the end of sft.py, which
+        goes through save_model() directly and never triggers on_save.
+        """
+        super().save_model(output_dir=output_dir, **kwargs)
+        target = output_dir or self.args.output_dir
+        if target and PartialState().is_main_process:
+            model_type = getattr(getattr(self.model, "config", None), "model_type", None)
+            if model_type:
+                from dllm.utils.models import sync_modeling_files
+                sync_modeling_files(model_type, target)
 
     def _preprocess_inputs(self, inputs):
         if self.right_shift_logits:

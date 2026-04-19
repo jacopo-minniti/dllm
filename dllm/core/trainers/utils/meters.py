@@ -171,6 +171,36 @@ class WandbAlertCallback(transformers.TrainerCallback):
         return control
 
 
+class ModelingFilesSyncCallback(transformers.TrainerCallback):
+    """Copies pipeline modeling .py files to every checkpoint directory at save time.
+
+    Runs only on the world-process-zero rank.  Guarantees that each checkpoint saved
+    during training is self-contained: evaluation can load it without a live dllm
+    installation or network access to the HuggingFace Hub.
+    """
+
+    def __init__(self, model_type: str):
+        self._model_type = model_type
+
+    def _sync(self, target_dir: str, is_main: bool) -> None:
+        if not is_main:
+            return
+        from dllm.utils.models import sync_modeling_files
+        sync_modeling_files(self._model_type, target_dir)
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Copy to output_dir so it's available from the very first checkpoint."""
+        self._sync(args.output_dir, state.is_world_process_zero)
+        return control
+
+    def on_save(self, args, state, control, **kwargs):
+        """Copy to the just-written checkpoint-{step} subdirectory."""
+        checkpoint_dir = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
+        if os.path.isdir(checkpoint_dir):
+            self._sync(checkpoint_dir, state.is_world_process_zero)
+        return control
+
+
 class SlurmCheckpointCallback(transformers.TrainerCallback):
     """
     Callback that catches SIGTERM (sent by Slurm when a job is about to time out)

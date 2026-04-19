@@ -26,7 +26,7 @@ from .data import (
     prepend_bos,
     tokenize_and_group,
 )
-from .models import get_model, get_tokenizer
+from .models import get_model, get_tokenizer, pipeline_models_src, sync_modeling_files
 from .sampling import infill_trim, sample_trim
 from .utils import (
     disable_caching_allocator_warmup,
@@ -84,6 +84,8 @@ __all__ = [
     # models
     "get_model",
     "get_tokenizer",
+    "pipeline_models_src",
+    "sync_modeling_files",
     # sampling
     "infill_trim",
     "sample_trim",

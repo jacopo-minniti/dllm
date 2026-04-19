@@ -14,6 +14,32 @@ from .configs import ModelArguments, TrainingArguments
 from .utils import disable_caching_allocator_warmup, load_peft, print_main
 
 
+def pipeline_models_src(model_type: str) -> str | None:
+    """Return the absolute path to the pipeline models/ directory for *model_type*, or None.
+
+    Supported types: "llada", "lladamoe", "fastdllm_v2".
+    The returned directory contains the pipeline's modeling .py files that must be
+    co-located with a checkpoint so HuggingFace can load the model without the dllm package.
+    """
+    if model_type not in ("llada", "lladamoe", "fastdllm_v2"):
+        return None
+    pipeline_name = "fastdllm_v2" if model_type == "fastdllm_v2" else "llada"
+    src = os.path.join(os.path.dirname(os.path.dirname(__file__)), f"pipelines/{pipeline_name}/models/")
+    return src if os.path.isdir(src) else None
+
+
+def sync_modeling_files(model_type: str, target_dir: str) -> None:
+    """Copy all pipeline .py files into *target_dir* (idempotent, no-op if type unknown)."""
+    import shutil
+    src = pipeline_models_src(model_type)
+    if src is None:
+        return
+    os.makedirs(target_dir, exist_ok=True)
+    for fname in os.listdir(src):
+        if fname.endswith(".py"):
+            shutil.copy2(os.path.join(src, fname), target_dir)
+
+
 def is_local_model(path: str) -> bool:
     """Check if a path is a valid local model directory with weights."""
     if not path or not os.path.isdir(path):
@@ -168,6 +194,14 @@ def get_model(
     except Exception:
         pass
 
+    # Normalize raw config model_type strings to internal identifiers used throughout this codebase.
+    # e.g. Fast_dLLM_QwenConfig sets model_type = "Fast_dLLM_Qwen", but we refer to it as "fastdllm_v2".
+    _MODEL_TYPE_ALIASES: dict[str, str] = {
+        "fast_dllm_qwen": "fastdllm_v2",
+    }
+    if model_type is not None:
+        model_type = _MODEL_TYPE_ALIASES.get(model_type.lower(), model_type)
+
     # Fallback: Detect by name if config loading failed or model_type is missing
     if model_type is None and base_model_path:
         if "lladamoe" in base_model_path.lower():
@@ -192,22 +226,6 @@ def get_model(
             from dllm.pipelines.llada.models import LLaDAMoEConfig, LLaDAMoEModelLM
             config_cls, model_cls = LLaDAMoEConfig, LLaDAMoEModelLM
             modeling_file = "configuration_lladamoe.py"
-
-        # If base_model_path is a directory, ensure it has the modeling code files for trust_remote_code fallback
-        if os.path.isdir(base_model_path) and not os.path.exists(os.path.join(base_model_path, modeling_file)):
-            ps = PartialState()
-            if ps.is_main_process:
-                # Correctly resolve the source directory based on model type
-                pipeline_name = "fastdllm_v2" if model_type == "fastdllm_v2" else "llada"
-                model_src = os.path.join(os.path.dirname(os.path.dirname(__file__)), f"pipelines/{pipeline_name}/models/")
-                
-                if os.path.exists(model_src):
-                    print(f"Rank 0: Rescuing missing modeling files in {base_model_path} from {model_src}...", flush=True)
-                    import shutil
-                    for f in os.listdir(model_src):
-                        if f.endswith(".py"):
-                            shutil.copy2(os.path.join(model_src, f), base_model_path)
-            ps.wait_for_everyone() 
 
         # Load config directly to bypass AutoConfig resolution bugs
         try:
