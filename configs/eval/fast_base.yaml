@@ -1,0 +1,8 @@
+evaluation:
+   eval_model: fast-dllm
+   tasks: "math500_reasoning"
+   apply_chat_template: False
+   num_fewshot: 4
+   model_args:
+     pretrained: "Efficient-Large-Model/Fast_dLLM_v2_1.5B"
+     use_loopholing: False
