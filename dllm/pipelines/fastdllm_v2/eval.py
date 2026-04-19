@@ -54,7 +54,11 @@ class Fast_dLLMEvalSamplerConfig(MDLMSamplerConfig):
     max_new_tokens: int = 1024
     block_size: int = 32
     small_block_size: int = 8
-    threshold: float = 0.9
+    # threshold=0.0 → fixed-step schedule (standard for any model not trained with PUMA).
+    # PUMA fine-tuned checkpoints should override this explicitly (e.g. threshold: 0.15).
+    # WARNING: non-zero threshold with few steps-per-block leaves many positions as mask tokens
+    # for models whose per-token confidence doesn't reliably exceed the cumulative budget.
+    threshold: float = 0.0
 
 @dataclass
 class Fast_dLLMEvalConfig(MDLMEvalConfig):

@@ -15,9 +15,9 @@ evaluation:
     pretrained: "GSAI-ML/LLaDA-8B-Base"
     dtype: "bfloat16"
     
-    # Interventions (Disabled)
-    use_cab: False
-    use_loopholing: False
+    # Interventions — omit use_cab/use_loopholing to let the model's own config.json decide.
+    # Only set these explicitly when you need to override (e.g. use_loopholing: True for a
+    # loopholing checkpoint, or False to force-disable on a model that has it).
     lora: False
     merge_lora: False
     

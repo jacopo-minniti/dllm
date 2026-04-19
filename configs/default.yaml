@@ -41,7 +41,8 @@ evaluation:
   seed: 42
   distributed_timeout: 3600
   apply_chat_template: False
-  
+  log_samples: True   # always write per-sample JSONL alongside aggregate results
+
   model_args:
     max_new_tokens: 512
     steps: 256

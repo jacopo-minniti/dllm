@@ -253,13 +253,17 @@ def get_model(
     # Identify model family for custom logic
     is_fast_dllm = (model_type == "fastdllm_v2" or (base_model_path and "Fast_dLLM" in base_model_path))
 
-    # Propagate all custom settings to the config object strictly
+    # Propagate custom settings to the config object.
+    # Architectural flags (use_loopholing, use_cab, …) default to None in ModelArguments —
+    # None means "not explicitly set, defer to the model's own saved config.json".
+    # Only non-None values are written so that loading a pretrained model without specifying
+    # these flags preserves its original architecture (e.g. use_loopholing=True in Fast_dLLM).
     if check_config is not None:
         custom_fields = {
-            "use_loopholing": getattr(model_args, "use_loopholing", False),
-            "only_mask_tokens": getattr(model_args, "only_mask_tokens", False),
-            "mlp_module": getattr(model_args, "mlp_module", False),
-            "use_cab": getattr(model_args, "use_cab", False),
+            "use_loopholing": getattr(model_args, "use_loopholing", None),
+            "only_mask_tokens": getattr(model_args, "only_mask_tokens", None),
+            "mlp_module": getattr(model_args, "mlp_module", None),
+            "use_cab": getattr(model_args, "use_cab", None),
             "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
             "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
             "read_layers": getattr(model_args, "read_layer", [-1]),
@@ -331,7 +335,9 @@ def get_model(
             print_main(f"⚠️ Failed to merge LoRA weights: {e}")
 
     # --- backbone mode for module-based training (CAB / Loopholing) ---
-    has_module = getattr(model_args, "use_cab", False) or getattr(model_args, "use_loopholing", False)
+    # Use bool() so that None (= "not explicitly set") is treated as False here — if the user
+    # didn't explicitly enable a module there is nothing to freeze/unfreeze around.
+    has_module = bool(getattr(model_args, "use_cab", None)) or bool(getattr(model_args, "use_loopholing", None))
     use_lora = getattr(model_args, "lora", False)
     freeze_backbone = getattr(model_args, "freeze_backbone", True)
 

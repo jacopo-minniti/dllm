@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass, field
+from typing import Optional
 
 import transformers
 
@@ -24,10 +25,12 @@ class ModelArguments:
     modules_to_save: str = None
     eval_checkpoint: str = None
     merge_lora: bool = False
-    use_loopholing: bool = False
-    only_mask_tokens: bool = False
-    mlp_module: bool = False
-    use_cab: bool = False
+    # Architectural flags — default None so that, when absent from the eval/train config, the
+    # model's own saved config.json is respected.  Set explicitly to True/False to override.
+    use_loopholing: Optional[bool] = None
+    only_mask_tokens: Optional[bool] = None
+    mlp_module: Optional[bool] = None
+    use_cab: Optional[bool] = None
     use_puma: bool = False
     use_bptt: bool = False
     cab_bottleneck_dim: int = 128
@@ -52,7 +55,7 @@ class ModelArguments:
         )
         # Force backbone dropouts to 0 when backbone is frozen — dropout on frozen weights wastes nothing
         # but can hurt gradient flow through the active module. Applies to all frozen-backbone modes.
-        has_module = self.use_cab or self.use_loopholing
+        has_module = bool(self.use_cab) or bool(self.use_loopholing)
         if has_module and not self.lora and self.freeze_backbone:
             self.attention_dropout = 0.0
             self.residual_dropout = 0.0

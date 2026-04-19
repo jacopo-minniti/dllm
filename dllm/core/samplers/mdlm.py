@@ -353,6 +353,7 @@ class MDLMSampler(BaseSampler):
                         transfer_index[j, to_unmask] = True
                     else:
                         # Fixed budget scheduling (Standard LLaDA)
+                        k = int(num_transfer_tokens[j, i].item())
                         if k > 0:
                             # Stable topk: add small epsilon to break ties deterministically
                             c_j = confidence[j]
