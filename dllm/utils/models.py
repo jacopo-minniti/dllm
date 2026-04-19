@@ -254,16 +254,18 @@ def get_model(
     is_fast_dllm = (model_type == "fastdllm_v2" or (base_model_path and "Fast_dLLM" in base_model_path))
 
     # Propagate custom settings to the config object.
-    # Architectural flags (use_loopholing, use_cab, …) default to None in ModelArguments —
-    # None means "not explicitly set, defer to the model's own saved config.json".
+    # Architectural flags (use_loopholing, use_cab, …) default to False in ModelArguments.
+    # False is treated as "not explicitly set" → converted to None here so that the model's
+    # own saved config.json is respected (e.g. a loopholing checkpoint keeps use_loopholing=True
+    # even when the eval config doesn't mention it).  Only True overrides.
     # Only non-None values are written so that loading a pretrained model without specifying
-    # these flags preserves its original architecture (e.g. use_loopholing=True in Fast_dLLM).
+    # these flags preserves its original architecture.
     if check_config is not None:
         custom_fields = {
-            "use_loopholing": getattr(model_args, "use_loopholing", None),
-            "only_mask_tokens": getattr(model_args, "only_mask_tokens", None),
-            "mlp_module": getattr(model_args, "mlp_module", None),
-            "use_cab": getattr(model_args, "use_cab", None),
+            "use_loopholing": getattr(model_args, "use_loopholing", False) or None,
+            "only_mask_tokens": getattr(model_args, "only_mask_tokens", False) or None,
+            "mlp_module": getattr(model_args, "mlp_module", False) or None,
+            "use_cab": getattr(model_args, "use_cab", False) or None,
             "cab_bottleneck_dim": getattr(model_args, "cab_bottleneck_dim", 128),
             "cab_mlp_expansion_dim": getattr(model_args, "cab_mlp_expansion_dim", 512),
             "read_layers": getattr(model_args, "read_layer", [-1]),
@@ -337,7 +339,7 @@ def get_model(
     # --- backbone mode for module-based training (CAB / Loopholing) ---
     # Use bool() so that None (= "not explicitly set") is treated as False here — if the user
     # didn't explicitly enable a module there is nothing to freeze/unfreeze around.
-    has_module = bool(getattr(model_args, "use_cab", None)) or bool(getattr(model_args, "use_loopholing", None))
+    has_module = getattr(model_args, "use_cab", False) or getattr(model_args, "use_loopholing", False)
     use_lora = getattr(model_args, "lora", False)
     freeze_backbone = getattr(model_args, "freeze_backbone", True)
 
