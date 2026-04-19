@@ -2,7 +2,7 @@ training:
   core:
     model: fast-dllm
     mode: base
-    backbone: unfrozen
+    backbone: trainable
     epochs: small
   
   hyperparameters:

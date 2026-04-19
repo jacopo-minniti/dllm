@@ -17,8 +17,8 @@ class ModelArguments:
     # --- fold PEFT args here ---
     lora: bool = False
     target_modules: str = "all-linear"
-    r: int = 32
-    lora_alpha: int = 64
+    r: int = 64
+    lora_alpha: int = 128
     lora_dropout: float = 0.05
     bias: str = "none"
     modules_to_save: str = None
@@ -50,12 +50,13 @@ class ModelArguments:
         self.model_name_or_path = resolve_with_base_env(
             self.model_name_or_path, "BASE_MODELS_DIR"
         )
-        # Fix: Forcing backbone dropouts to 0 when training CAB only, ensuring consistency with frozen weights.
-        if self.use_cab and not self.lora and self.freeze_backbone:
-             # logger.info("CAB mode detected: Forcing backbone dropouts to 0.0 for stability.")
-             self.attention_dropout = 0.0
-             self.residual_dropout = 0.0
-             self.embedding_dropout = 0.0
+        # Force backbone dropouts to 0 when backbone is frozen — dropout on frozen weights wastes nothing
+        # but can hurt gradient flow through the active module. Applies to all frozen-backbone modes.
+        has_module = self.use_cab or self.use_loopholing
+        if has_module and not self.lora and self.freeze_backbone:
+            self.attention_dropout = 0.0
+            self.residual_dropout = 0.0
+            self.embedding_dropout = 0.0
 
 
 @dataclass

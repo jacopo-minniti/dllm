@@ -312,58 +312,70 @@ def get_model(
         except Exception as e:
             print_main(f"⚠️ Failed to merge LoRA weights: {e}")
 
-    # --- Freeze backbone and only train CAB if requested ---
-    if getattr(model_args, "use_cab", False) and not getattr(model_args, "lora", False):
-        if getattr(model_args, "freeze_backbone", True):
-            print_main("❄️ CAB training detected. Freezing base model parameters...")
-            # Determine the indices of CAB modules that are actually called in the forward pass
-            active_read_indices = []
-            if hasattr(model, "model") and hasattr(model.model, "read_layers"):
-                active_read_indices = model.model.read_layers
-            elif hasattr(model.config, "read_layers") or hasattr(model.config, "read_layer"):
-                read_attr = getattr(model.config, "read_layers", getattr(model.config, "read_layer", [-1]))
-                active_read_indices = read_attr if isinstance(read_attr, list) else [read_attr]
-                n_layers = getattr(model.config, "num_hidden_layers", 28)
-                active_read_indices = [l if l >= 0 else n_layers + l for l in active_read_indices]
+    # --- backbone mode for module-based training (CAB / Loopholing) ---
+    has_module = getattr(model_args, "use_cab", False) or getattr(model_args, "use_loopholing", False)
+    use_lora = getattr(model_args, "lora", False)
+    freeze_backbone = getattr(model_args, "freeze_backbone", True)
 
-            cab_params = []
-            unused_cab_count = 0
+    if has_module:
+        if use_lora:
+            # LoRA freezes every param except adapters; un-freeze the custom module so it trains fully.
+            module_params = []
             for name, param in model.named_parameters():
-                if "cab" not in name:
+                if "cab" in name or "loophole" in name:
+                    param.requires_grad = True
+                    module_params.append(name)
+            if module_params:
+                print_main(f"🔥 LoRA+module: unfroze {len(module_params)} module parameters alongside LoRA adapters.")
+        elif freeze_backbone:
+            print_main("❄️ Frozen backbone: training only active module parameters...")
+            active_read_indices = _get_active_read_indices(model, model_args)
+
+            module_params = []
+            unused_count = 0
+            for name, param in model.named_parameters():
+                if "cab" not in name and "loophole" not in name:
                     param.requires_grad = False
                 else:
-                    is_unused_cab = False
-                    parts = name.split(".")
-                    try:
-                        # Active CAB modules are those at layers >= min(read_layers).
-                        # They receive h_t from read_states accumulated up to that point.
-                        # Layers before the first read_layer never see any read_states and are never called.
-                        if "cab_modules" in parts and active_read_indices:
-                            layer_idx = int(parts[parts.index("cab_modules") + 1])
-                            if layer_idx < min(active_read_indices):
-                                is_unused_cab = True
-                    except (ValueError, IndexError):
-                        pass
-
-                    if is_unused_cab:
+                    if _is_unused_cab_param(name, active_read_indices):
                         param.requires_grad = False
-                        unused_cab_count += 1
+                        unused_count += 1
                     else:
                         param.requires_grad = True
-                        cab_params.append(name)
-            
-            if unused_cab_count > 0:
-                print_main(f"🔇 Froze {unused_cab_count} unused CAB parameter tensors (outside active indices {active_read_indices}).")
-            if cab_params:
-                print_main(f"🔥 Training {len(cab_params)} CAB parameters (e.g., {cab_params[0]}...)")
-        else:
-            print_main("🔥 CAB training detected with FULL SFT. Backbone parameters remain unfrozen.")
+                        module_params.append(name)
 
-        # ensure input require grads for checkpointing support
-        if hasattr(model, "enable_input_require_grads"):
+            if unused_count > 0:
+                print_main(f"🔇 Froze {unused_count} unused module parameter tensors (outside active indices {active_read_indices}).")
+            if module_params:
+                print_main(f"🔥 Training {len(module_params)} module parameters (e.g., {module_params[0]}...)")
+        else:
+            print_main("🔥 Trainable backbone: all parameters including the module will be trained.")
+
+        if not use_lora and hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
 
     return model
+
+
+def _get_active_read_indices(model, model_args) -> list[int]:
+    if hasattr(model, "model") and hasattr(model.model, "read_layers"):
+        return model.model.read_layers
+    read_attr = getattr(model_args, "read_layers", None) or getattr(model_args, "read_layer", [-1])
+    indices = read_attr if isinstance(read_attr, list) else [read_attr]
+    n_layers = getattr(getattr(model, "config", None), "num_hidden_layers", 28)
+    return [l if l >= 0 else n_layers + l for l in indices]
+
+
+def _is_unused_cab_param(name: str, active_read_indices: list[int]) -> bool:
+    """CAB modules at layers < min(read_layers) are never called — safe to freeze."""
+    if "cab_modules" not in name or not active_read_indices:
+        return False
+    parts = name.split(".")
+    try:
+        layer_idx = int(parts[parts.index("cab_modules") + 1])
+        return layer_idx < min(active_read_indices)
+    except (ValueError, IndexError):
+        return False
 
 
 def get_tokenizer(

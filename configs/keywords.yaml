@@ -78,9 +78,11 @@ shortcuts:
     large:  { num_train_epochs: 3 }
   
   backbone:
-    frozen:   { freeze_backbone: True }
-    unfrozen: { freeze_backbone: False }
-    full:     { freeze_backbone: False }
+    frozen:    { freeze_backbone: True }
+    trainable: { freeze_backbone: False }
+    lora:      { freeze_backbone: False, lora: True, r: 64, lora_alpha: 128 }
+    unfrozen:  { freeze_backbone: False }  # legacy alias
+    full:      { freeze_backbone: False }  # legacy alias
   
   cab_size:
     small:  { cab_bottleneck_dim: 512,  cab_mlp_expansion_dim: 1024 }

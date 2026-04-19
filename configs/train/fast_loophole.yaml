@@ -2,7 +2,7 @@ training:
   core:
     model: fast-dllm
     mode: loophole_bptt
-    backbone: unfrozen
+    backbone: trainable
     epochs: small
     bptt: 2
   
