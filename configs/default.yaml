@@ -37,7 +37,7 @@ evaluation:
   model: "llada"
   tasks: "math500_reasoning"
   num_fewshot: 4
-  batch_size: 32
+  batch_size: 8
   seed: 42
   distributed_timeout: 3600
   apply_chat_template: False

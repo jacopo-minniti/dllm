@@ -1,7 +1,7 @@
 evaluation:
   # Evaluation Harness
   script_path: "dllm/pipelines/llada/eval.py"
-  tasks: "math500_reasoning"
+  tasks: "math50_reasoning"
   num_fewshot: 4
   batch_size: 8
   seed: 42
@@ -10,14 +10,11 @@ evaluation:
   log_samples: True
 
   # Model Configuration
-  model: "llada"
+  model: "llada-8b"
   model_args:
     pretrained: "GSAI-ML/LLaDA-8B-Base"
     dtype: "bfloat16"
     
-    # Interventions — omit use_cab/use_loopholing to let the model's own config.json decide.
-    # Only set these explicitly when you need to override (e.g. use_loopholing: True for a
-    # loopholing checkpoint, or False to force-disable on a model that has it).
     lora: False
     merge_lora: False
     

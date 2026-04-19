@@ -6,3 +6,4 @@ evaluation:
    model_args:
      pretrained: "Efficient-Large-Model/Fast_dLLM_v2_1.5B"
      use_loopholing: False
+     threshold: 0.0
