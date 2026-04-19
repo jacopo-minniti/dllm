@@ -1,4 +1,4 @@
-from .meters import BaseMetricsCallback, OnEvaluateMetricsCallback, WandbAlertCallback, SlurmCheckpointCallback
+from .meters import BaseMetricsCallback, OnEvaluateMetricsCallback, WandbAlertCallback, SlurmCheckpointCallback, ModelingFilesSyncCallback
 from .metrics import NLLMetric, PPLMetric, StatsMetric
 
 __all__ = [
@@ -6,6 +6,7 @@ __all__ = [
     "OnEvaluateMetricsCallback",
     "WandbAlertCallback",
     "SlurmCheckpointCallback",
+    "ModelingFilesSyncCallback",
     "NLLMetric",
     "PPLMetric",
     "StatsMetric",
