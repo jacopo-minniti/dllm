@@ -2,7 +2,7 @@ training:
   core:
     model: fast-dllm
     mode: cab_all
-    backbone: frozen
+    backbone: lora
     read_layer: 14
   
   hyperparameters:

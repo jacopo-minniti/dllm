@@ -4,6 +4,6 @@ evaluation:
    apply_chat_template: False
    num_fewshot: 4
    model_args:
-     pretrained: ".models/Fast_dLLM_v2_1.5B/tulu-3-sft-mixture/base-loophole-puma-bptt/lr2e-05_bs128_puma-th0.15_bptt2_loop/checkpoint-final"
+     pretrained: ".models/Fast_dLLM_v2_1.5B/tulu-3-sft-mixture/lora-loophole-puma-bptt/lr2e-05_bs128_lora-r64-a128_puma-th0.15_bptt2_loop/checkpoint-final"
      use_loopholing: True
      threshold: 0.15
