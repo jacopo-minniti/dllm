@@ -174,15 +174,60 @@ def train():
         
         # 4. Synchronize: all ranks wait for Rank 0 to finish mapping and saving (if it was needed)
         time_log("Waiting at the PRE-processing sync barrier...")
-        state.wait_for_everyone() 
+        state.wait_for_everyone()
         time_log("PRE-processing barrier cleared.")
-        
-        # 5. All ranks load the processed dataset from the shared cache
-        # (This handles both the case where it was just created or already existed)
+
+        # 5. All ranks load the processed dataset from the shared cache.
+        # Guard against a corrupted cache (e.g. the previous run was interrupted
+        # while rank 0 was writing Arrow files). If loading fails, rank 0 removes
+        # the corrupt directory, all ranks sync, then fall through to re-map.
         time_log(f"Rank {state.process_index}: Loading processed data from shared disk...")
         from datasets import load_from_disk
-        dataset = load_from_disk(processed_cache_path)
-        time_log(f"Rank {state.process_index}: Disk load complete.")
+        import shutil
+        _load_ok = False
+        try:
+            dataset = load_from_disk(processed_cache_path)
+            _load_ok = True
+            time_log(f"Rank {state.process_index}: Disk load complete.")
+        except Exception as _load_err:
+            time_log(f"WARNING: load_from_disk failed ({_load_err}). Treating cache as corrupt.", force=True)
+
+        if not _load_ok:
+            # Rank 0 removes the corrupt directory so the next barrier starts clean
+            if state.is_main_process:
+                if os.path.exists(processed_cache_path):
+                    shutil.rmtree(processed_cache_path, ignore_errors=True)
+                    time_log(f"Rank 0: Deleted corrupt cache at {processed_cache_path}.")
+            state.wait_for_everyone()
+
+            # Re-run mapping on rank 0 and save, then all ranks reload
+            time_log("Rank 0: Re-mapping dataset after cache corruption...")
+            if state.is_main_process:
+                map_fn = partial(
+                    dllm.utils.default_sft_map_fn,
+                    tokenizer=tokenizer,
+                    mask_prompt_loss=data_args.mask_prompt_loss,
+                    use_chat_template=data_args.use_chat_template,
+                )
+                dataset = dllm.data.load_sft_dataset(
+                    data_args.dataset,
+                    load_preprocessed_data=False,
+                )
+                dataset = dataset.map(
+                    map_fn,
+                    batched=False,
+                    num_proc=1,
+                    desc="Chat Template Mapping (retry)",
+                )
+                dataset = dllm.utils.post_process_dataset(dataset, data_args)
+                os.makedirs(os.path.dirname(processed_cache_path), exist_ok=True)
+                dataset.save_to_disk(processed_cache_path)
+                time_log("Rank 0: Re-mapping and save complete.")
+
+            state.wait_for_everyone()
+            time_log(f"Rank {state.process_index}: Loading re-processed data from shared disk...")
+            dataset = load_from_disk(processed_cache_path)
+            time_log(f"Rank {state.process_index}: Disk load complete (after cache recovery).")
     else:
         # If already preprocessed, we just ensure post-processing is consistent
         time_log("Using pre-processed flag. Finalizing dataset state...")

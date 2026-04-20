@@ -1,7 +1,7 @@
 evaluation:
    eval_model: fast-dllm
    tasks: "math500_reasoning"
-   apply_chat_template: False
+   apply_chat_template: True
    num_fewshot: 4
    model_args:
      pretrained: ".models/Fast_dLLM_v2_1.5B/tulu-3-sft-mixture/lora-loophole-puma-bptt/lr2e-05_bs128_lora-r64-a128_puma-th0.15_bptt2_loop/checkpoint-final"

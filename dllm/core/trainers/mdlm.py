@@ -140,19 +140,33 @@ class MDLMTrainer(transformers.Trainer):
              )
 
     def _wrap_model(self, model, training=True, dataloader=None):
-        wrapped = super()._wrap_model(model, training=training, dataloader=dataloader)
         # BPTT unrolls num_steps forward passes through the same parameters and
         # sums the losses before a single backward(). DDP fires its gradient-ready
         # hook once per forward, so each parameter is marked ready num_steps times,
-        # which DDP rejects. _set_static_graph() disables that check for graphs
-        # that are structurally identical across iterations.
+        # which DDP rejects.
         #
-        # Reentrant gradient checkpointing compounds this: each checkpointed
-        # segment re-runs its forward during backward, re-triggering DDP hooks.
-        # Switching to non-reentrant checkpointing avoids that second trigger.
+        # _set_static_graph() was the original fix but it requires the set of
+        # *unused* parameters to be identical across all iterations. With LoRA +
+        # PUMA the per-iteration participation varies (e.g. a slot with no masked
+        # tokens never enters a LoRA block), so _set_static_graph() raises:
+        #   "Expected to have finished reduction in the prior iteration before
+        #    starting a new one."
+        #
+        # The correct fix is find_unused_parameters=True, set BEFORE DDP creation
+        # (Trainer reads this flag inside super()._wrap_model). This lets DDP
+        # dynamically discover unused params each iteration at a small overhead
+        # cost — acceptable for BPTT workloads.
+        #
+        # Reentrant gradient checkpointing compounds the DDP hook issue: each
+        # checkpointed segment re-runs its forward during backward, re-triggering
+        # hooks. Non-reentrant checkpointing avoids that second trigger.
+        if "bptt" in self.args.loss_type and training:
+            if self.args.ddp_find_unused_parameters is None:
+                self.args.ddp_find_unused_parameters = True
+
+        wrapped = super()._wrap_model(model, training=training, dataloader=dataloader)
+
         if "bptt" in self.args.loss_type:
-            if hasattr(wrapped, "_set_static_graph"):
-                wrapped._set_static_graph()
             # Switch the underlying model to non-reentrant checkpointing
             inner = wrapped.module if hasattr(wrapped, "module") else wrapped
             if hasattr(inner, "gradient_checkpointing_enable"):
