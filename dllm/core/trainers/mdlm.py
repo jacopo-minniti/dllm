@@ -161,8 +161,12 @@ class MDLMTrainer(transformers.Trainer):
         # checkpointed segment re-runs its forward during backward, re-triggering
         # hooks. Non-reentrant checkpointing avoids that second trigger.
         if "bptt" in self.args.loss_type and training:
-            if self.args.ddp_find_unused_parameters is None:
-                self.args.ddp_find_unused_parameters = True
+            # Force True unconditionally — the default in some Transformers builds is
+            # False (not None), so the previous `is None` guard silently did nothing.
+            # With LoRA + PUMA some adapter params are genuinely unused in a given step
+            # (e.g. slots with no masked tokens skip certain LoRA projections), so DDP
+            # needs dynamic detection rather than assuming all params get gradients.
+            self.args.ddp_find_unused_parameters = True
 
         wrapped = super()._wrap_model(model, training=training, dataloader=dataloader)
 

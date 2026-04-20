@@ -189,6 +189,10 @@ class StreamingBatch:
                     self.ready_to_evict[i] = True
 
         if h_s is not None:
+            if torch.isnan(h_s).any():
+                nan_rows = torch.isnan(h_s).flatten(1).any(dim=1)
+                h_s = h_s.clone()
+                h_s[nan_rows] = 0.0
             if self.h_t is None:
                 b, l, d = h_s.shape
                 self.h_t = torch.zeros((self.capacity, self.seq_len, d), dtype=h_s.dtype, device=h_s.device)

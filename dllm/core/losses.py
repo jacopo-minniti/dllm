@@ -61,7 +61,9 @@ class PumaLoss(nn.Module):
         labels = batch["labels"]
         attention_mask = batch.get("attention_mask")
         h_t = batch.get("h_t")
-        
+        if h_t is not None and torch.isnan(h_t).any():
+            h_t = None
+
         # Forward pass
         outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
         logits = outputs.logits
@@ -211,6 +213,8 @@ class LoopholingBPTTPumaLoss(nn.Module):
         labels = batch["labels"]
         attention_mask = batch.get("attention_mask")
         h_t = batch.get("h_t")
+        if h_t is not None and torch.isnan(h_t).any():
+            h_t = None
 
         maskable_mask = labels != -100
 

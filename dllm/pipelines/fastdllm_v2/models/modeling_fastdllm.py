@@ -895,9 +895,18 @@ class Fast_dLLM_QwenModel(Fast_dLLM_QwenPreTrainedModel):
             _nan_check("post_final_norm", hidden_states)
 
         # Assemble h_s (cross-step memory for next denoising step)
+        # Use post-norm hidden_states for the last transformer layer to avoid the
+        # large pre-norm magnitudes that cause bfloat16 overflow in CAB projections.
+        last_layer_idx = self.config.num_hidden_layers - 1
         h_s = None
         if (self.use_cab or self.use_loopholing) and not _in_internal_training:
-            h_s_list = [collected_h_s[idx] for idx in self.read_layers if idx in collected_h_s]
+            h_s_list = []
+            for idx in self.read_layers:
+                if idx in collected_h_s:
+                    if idx == last_layer_idx:
+                        h_s_list.append(hidden_states)  # post-norm, stable magnitude
+                    else:
+                        h_s_list.append(collected_h_s[idx])
             if not h_s_list:
                 h_s = hidden_states
             elif len(h_s_list) == 1:
