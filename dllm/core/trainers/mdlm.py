@@ -108,23 +108,15 @@ class MDLMTrainer(transformers.Trainer):
         }
         self.loss_fn = self.loss_fns.get(args.loss_type, self.loss_fns["mlm"])
         self.active_streaming_batch = None
-        # Ensure loopholing is enabled on the model if needed by the loss function
         if "bptt" in args.loss_type:
-             use_state = False
-             model_config = None
-             if hasattr(self.model, "config"):
-                  model_config = self.model.config
-             elif hasattr(self.model, "model") and hasattr(self.model.model, "config"):
-                  model_config = self.model.model.config
-             
-             if model_config is not None:
-                  use_state = getattr(model_config, "use_loopholing", False) or getattr(model_config, "use_cab", False)
-             
-             if not use_state:
-                  raise ValueError(
-                      f"Loss function '{args.loss_type}' requires state persistence support (Loopholing or CAB). "
-                      "Please enable one of them by adding '--use_loopholing True' or '--use_cab True' to your launch command."
-                  )
+            cfg = getattr(self.model, "config", None)
+            if cfg is None:
+                cfg = getattr(getattr(self.model, "model", None), "config", None)
+            if not (getattr(cfg, "use_loopholing", False) or getattr(cfg, "use_cab", False)):
+                raise ValueError(
+                    f"Loss function '{args.loss_type}' requires state persistence (Loopholing or CAB). "
+                    "Enable one with '--use_loopholing True' or '--use_cab True'."
+                )
 
         # Check for potential NCCL timeouts in distributed training with PUMA
         if (
@@ -140,32 +132,13 @@ class MDLMTrainer(transformers.Trainer):
              )
 
     def _wrap_model(self, model, training=True, dataloader=None):
-        # BPTT unrolls num_steps forward passes through the same parameters and
-        # sums the losses before a single backward(). DDP fires its gradient-ready
-        # hook once per forward, so each parameter is marked ready num_steps times,
-        # which DDP rejects.
-        #
-        # _set_static_graph() was the original fix but it requires the set of
-        # *unused* parameters to be identical across all iterations. With LoRA +
-        # PUMA the per-iteration participation varies (e.g. a slot with no masked
-        # tokens never enters a LoRA block), so _set_static_graph() raises:
-        #   "Expected to have finished reduction in the prior iteration before
-        #    starting a new one."
-        #
-        # The correct fix is find_unused_parameters=True, set BEFORE DDP creation
-        # (Trainer reads this flag inside super()._wrap_model). This lets DDP
-        # dynamically discover unused params each iteration at a small overhead
-        # cost — acceptable for BPTT workloads.
-        #
-        # Reentrant gradient checkpointing compounds the DDP hook issue: each
-        # checkpointed segment re-runs its forward during backward, re-triggering
-        # hooks. Non-reentrant checkpointing avoids that second trigger.
+        # BPTT does num_steps forwards before one backward(). DDP's _rebuild_buckets()
+        # fires at each forward start and crashes when it sees unfinished reduction from
+        # the previous forward. find_unused_parameters=True must be set before DDP is
+        # created (inside super()._wrap_model), and no_sync() is applied in the loss
+        # functions to suppress all-reduce on intermediate steps.
+        # Non-reentrant gradient checkpointing is required to avoid double hook triggers.
         if "bptt" in self.args.loss_type and training:
-            # Force True unconditionally — the default in some Transformers builds is
-            # False (not None), so the previous `is None` guard silently did nothing.
-            # With LoRA + PUMA some adapter params are genuinely unused in a given step
-            # (e.g. slots with no masked tokens skip certain LoRA projections), so DDP
-            # needs dynamic detection rather than assuming all params get gradients.
             self.args.ddp_find_unused_parameters = True
 
         wrapped = super()._wrap_model(model, training=training, dataloader=dataloader)

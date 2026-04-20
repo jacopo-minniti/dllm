@@ -82,8 +82,6 @@ class MDLMSampler(BaseSampler):
         threshold = kwargs.get("threshold", config.threshold)
         confidence_type = kwargs.get("confidence_type", config.confidence_type)
 
-        # Logging for confidence-based unmasking confirmation
-        import torch.distributed as dist
         if not dist.is_initialized() or dist.get_rank() == 0:
             print(f"--- Sampling Configuration ---")
             print(f"Steps: {steps}, Max New Tokens: {max_new_tokens}, Block Size: {block_size}")
@@ -119,9 +117,7 @@ class MDLMSampler(BaseSampler):
         # Get prompt lengths
         prompt_lens = [p.shape[0] for p in inputs]
         
-        # In distributed settings, we must ensure all ranks have a consistent max prompt length
-        # even if some ranks have 0 samples. 
-        import torch.distributed as dist
+        # All ranks must agree on max prompt length even if some have 0 samples.
         if dist.is_initialized():
             local_max = max(prompt_lens) if prompt_lens else 0
             max_p_len_tensor = torch.tensor([local_max], device=self.model.device, dtype=torch.long)

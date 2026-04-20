@@ -50,7 +50,7 @@ class StreamingBatch:
         self.metadata = {}
         for k, v in batch.items():
             if k not in ["input_ids", "labels"] and isinstance(v, torch.Tensor):
-                pad_val = 0 if "mask" in k.lower() else 0
+                pad_val = 0
                 self.metadata[k] = torch.full((self.capacity, self.seq_len), pad_val, dtype=v.dtype, device=device)
                 self.metadata[k][:num_to_fill] = v[:num_to_fill].clone()
 
@@ -125,7 +125,7 @@ class StreamingBatch:
             
             for k, v in batch.items():
                 if k not in ["input_ids", "labels"] and k in self.metadata and isinstance(v, torch.Tensor):
-                    pad_val = 0 if "mask" in k.lower() else 0
+                    pad_val = 0
                     self.metadata[k][target_slots] = self._prepare_tensor(v[:num_to_fill], self.seq_len, pad_value=pad_val)
 
             # These slots are no longer ready to evict (they just started)
