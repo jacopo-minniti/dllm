@@ -1,10 +1,10 @@
 training:
   core:
     model: fast-dllm
-    mode: loophole_bptt
-    backbone: lora
+    mode: loophole
+    backbone: full
     epochs: small
-    bptt: 2
+    # bptt: 1
   
   hyperparameters:
     learning_rate: 2e-05
@@ -13,3 +13,4 @@ training:
   
   dataset:
     dataset: tulu
+    use_chat_template: True

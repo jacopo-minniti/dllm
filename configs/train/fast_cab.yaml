@@ -2,15 +2,15 @@ training:
   core:
     model: fast-dllm
     mode: cab_all
-    backbone: lora
-    read_layer: 14
+    backbone: frozen
+    epochs: small
+    bptt: 2
   
   hyperparameters:
-    epochs: small
-    cab_size: small
-    learning_rate: 1e-04
-    per_device_train_batch_size: 2
+    learning_rate: 2e-05
+    per_device_train_batch_size: 4
     gradient_accumulation_steps: 4
   
   dataset:
     dataset: tulu
+    use_chat_template: True
