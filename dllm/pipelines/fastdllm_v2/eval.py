@@ -59,6 +59,9 @@ class Fast_dLLMEvalSamplerConfig(MDLMSamplerConfig):
     # WARNING: non-zero threshold with few steps-per-block leaves many positions as mask tokens
     # for models whose per-token confidence doesn't reliably exceed the cumulative budget.
     threshold: float = 0.0
+    # fast-dllm is trained with HuggingFace's standard shifted CE loss (logit[i] predicts
+    # token[i+1]), so to predict the token at position i we must read logit[i-1].
+    right_shift_logits: bool = True
 
 @dataclass
 class Fast_dLLMEvalConfig(MDLMEvalConfig):
