@@ -1,3 +1,4 @@
+import contextlib
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -123,13 +124,23 @@ class LoopholingBPTTLoss(nn.Module):
 
         h_t = None
         loss_terms = []
-        
+
         # T-step unroll
         for t in range(self.num_steps):
             masked_mask = (input_ids == self.mask_token_id) & maskable_mask
 
+            # For DDP + BPTT: wrapping all-but-the-last forward in no_sync() prevents
+            # DDP's _rebuild_buckets() from firing on intermediate steps (it would see
+            # "unfinished reduction" from the previous forward and crash). The final
+            # step runs normally so DDP all-reduce fires during the single backward().
+            _sync_ctx = (
+                model.no_sync()
+                if t < self.num_steps - 1 and hasattr(model, "no_sync")
+                else contextlib.nullcontext()
+            )
             # Forward pass
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
+            with _sync_ctx:
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
             
@@ -247,8 +258,18 @@ class LoopholingBPTTPumaLoss(nn.Module):
                     flush=True,
                 )
 
+            # For DDP + BPTT: wrapping all-but-the-last forward in no_sync() prevents
+            # DDP's _rebuild_buckets() from firing on intermediate steps (it would see
+            # "unfinished reduction" from the previous forward and crash). The final
+            # step runs normally so DDP all-reduce fires during the single backward().
+            _sync_ctx = (
+                model.no_sync()
+                if t < self.num_steps - 1 and hasattr(model, "no_sync")
+                else contextlib.nullcontext()
+            )
             # Forward pass
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
+            with _sync_ctx:
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
             final_outputs = outputs

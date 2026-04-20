@@ -234,15 +234,18 @@ class MDLMSampler(BaseSampler):
             
             can_use_h_t = "h_t" in forward_params
             use_loopholing = getattr(self.model.config, "use_loopholing", False)
+            use_cab = getattr(self.model.config, "use_cab", False)
+            # Either mechanism feeds h_s → h_t as cross-step memory
+            use_h_t_memory = use_loopholing or use_cab
 
             for i in range(effective_steps):
                 # Update mask_index within this block for this specific step
                 mask_index = is_mask & attention_mask.bool()
                 # within current block range
                 block_start = max(0, min(prompt_lens) + b * block_size)
-                # Actually we can just check if any masks are left in the whole sequence 
+                # Actually we can just check if any masks are left in the whole sequence
                 # but we focus on unmasking the currently targeted area.
-                
+
                 if not mask_index.any():
                     break
 
@@ -251,22 +254,27 @@ class MDLMSampler(BaseSampler):
                     un_x[unmasked_index] = mask_id
                     x_ = torch.cat([x, un_x], dim=0)
 
-                    if use_loopholing and h_t is not None and can_use_h_t:
-                        # We carry both conditional and unconditional hidden states
-                        h_t_batch = torch.cat([h_t, h_t_uncond], dim=0)
+                    # Prepare h_t_batch for whichever mechanism is active.
+                    # Must be defined BEFORE fwd_kwargs whether h_t is None or not
+                    # (on step 0 h_t is None; on later steps it carries the cross-step memory).
+                    if can_use_h_t:
+                        if h_t is not None:
+                            h_t_batch = torch.cat([h_t, h_t_uncond], dim=0)
+                        else:
+                            h_t_batch = None
 
                     # Forward pass
                     fwd_kwargs = {"input_ids": x_, "attention_mask": attention_mask.repeat(2, 1)}
                     if can_use_h_t:
                         fwd_kwargs["h_t"] = h_t_batch
-                        
+
                     m_out = self.model(**fwd_kwargs)
                     logits = m_out.logits
                     logits, un_logits = torch.chunk(logits, 2, dim=0)
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
 
-                    # Update h_t and h_t_uncond
-                    if use_loopholing and can_use_h_t:
+                    # Update h_t and h_t_uncond for next step (loopholing AND cab both use h_s)
+                    if use_h_t_memory and can_use_h_t:
                         h_s = getattr(m_out, "h_s", None)
                         if h_s is not None:
                             h_t, h_t_uncond = torch.chunk(h_s, 2, dim=0)
@@ -275,12 +283,12 @@ class MDLMSampler(BaseSampler):
                     fwd_kwargs = {"input_ids": x, "attention_mask": attention_mask}
                     if can_use_h_t:
                         fwd_kwargs["h_t"] = h_t
-                        
+
                     m_out = self.model(**fwd_kwargs)
                     logits = m_out.logits
 
-                    # Update h_t
-                    if use_loopholing and can_use_h_t:
+                    # Update h_t for next step (loopholing AND cab both use h_s)
+                    if use_h_t_memory and can_use_h_t:
                         h_t = getattr(m_out, "h_s", None)
 
                 if suppress_tokens is not None and len(suppress_tokens) > 0:

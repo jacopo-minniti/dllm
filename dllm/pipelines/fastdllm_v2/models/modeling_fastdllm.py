@@ -436,9 +436,11 @@ class LoopholeModule(nn.Module):
         read_layers = getattr(config, "read_layers", -1)
         if isinstance(read_layers, int):
             read_layers = [read_layers]
-            
+
         if len(read_layers) > 1:
-            self.multi_layer_gate = nn.Parameter(torch.zeros(1))
+            # One learnable weight per read-layer; softmax gives a normalised blend.
+            # Initialised to 0 so all layers start with equal weight (softmax(0…0) = 1/N).
+            self.multi_layer_gate = nn.Parameter(torch.zeros(len(read_layers)))
 
         if getattr(config, "mlp_module", False):
             self.mlp = nn.ModuleDict({
@@ -458,8 +460,10 @@ class LoopholeModule(nn.Module):
 
     def forward(self, h_t: torch.Tensor) -> torch.Tensor:
         if self.multi_layer_gate is not None and h_t.ndim == 4:
-            alpha = torch.sigmoid(self.multi_layer_gate)
-            h = alpha * h_t[:, 0] + (1.0 - alpha) * h_t[:, 1]
+            # h_t: (B, N, L, D) where N = len(read_layers)
+            # Softmax-weighted sum over all N read layers → (B, L, D)
+            weights = torch.softmax(self.multi_layer_gate, dim=0)  # (N,)
+            h = (weights.view(1, -1, 1, 1) * h_t).sum(dim=1)
         else:
             h = h_t
 
