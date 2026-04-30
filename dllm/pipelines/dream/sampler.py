@@ -161,6 +161,9 @@ class DreamSampler(BaseSampler):
         )
 
         # --- Iterative refinement ---
+        use_h_t = getattr(self.model.config, "use_loopholing", False) or getattr(self.model.config, "use_cab", False)
+        h_t = None
+
         x = generation_tokens_hook_func(None, x, None)
         histories = [x.clone()] if return_dict else None
         for i in range(effective_steps):
@@ -174,11 +177,26 @@ class DreamSampler(BaseSampler):
                 pos_id_cfg = (
                     torch.cat([pos_id, pos_id], dim=0) if pos_id is not None else None
                 )
-                logits = self.model(x_, attention_mask_cfg, pos_id_cfg).logits
-                logits, un_logits = torch.chunk(logits, 2, dim=0)
-                logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+                if use_h_t:
+                    h_t_cfg = torch.cat([h_t, h_t], dim=0) if h_t is not None else None
+                    m_out = self.model(x_, attention_mask_cfg, pos_id_cfg, h_t=h_t_cfg)
+                    logits = m_out.logits
+                    logits, un_logits = torch.chunk(logits, 2, dim=0)
+                    logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+                    h_s = getattr(m_out, "h_s", None)
+                    if h_s is not None:
+                        h_t, _ = torch.chunk(h_s, 2, dim=0)
+                else:
+                    logits = self.model(x_, attention_mask_cfg, pos_id_cfg).logits
+                    logits, un_logits = torch.chunk(logits, 2, dim=0)
+                    logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
             else:
-                logits = self.model(x, attention_mask, pos_id).logits
+                if use_h_t:
+                    m_out = self.model(x, attention_mask, pos_id, h_t=h_t)
+                    logits = m_out.logits
+                    h_t = getattr(m_out, "h_s", None)
+                else:
+                    logits = self.model(x, attention_mask, pos_id).logits
 
             if right_shift_logits:
                 logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
@@ -366,13 +384,21 @@ class DreamSampler(BaseSampler):
         effective_steps = num_transfer_tokens_list.size(1)
 
         # Optional initial token hook
+        use_h_t = getattr(self.model.config, "use_loopholing", False) or getattr(self.model.config, "use_cab", False)
+        h_t = None
+
         x = generation_tokens_hook_func(None, x, None)
         histories = [x.clone()] if return_dict else None
         for i in range(effective_steps):
             mask_index = x == mask_token_id
 
             # Forward pass, then AR-shift to predict token at position i+1
-            logits = self.model(x, attention_mask, pos_id).logits
+            if use_h_t:
+                m_out = self.model(x, attention_mask, pos_id, h_t=h_t)
+                logits = m_out.logits
+                h_t = getattr(m_out, "h_s", None)
+            else:
+                logits = self.model(x, attention_mask, pos_id).logits
             if right_shift_logits:
                 logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
 

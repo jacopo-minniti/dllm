@@ -438,6 +438,139 @@ class DreamSdpaAttention(DreamAttention):
         return attn_output, None, past_key_value
 
 
+class ZeroBridgeRMSNorm(nn.Module):
+    """RMSNorm with zero-bridge init (γ=0, β=0.001) to preserve pretrained behavior at start of training."""
+    def __init__(self, size: int, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        self.gamma = nn.Parameter(torch.zeros(size))
+        self.beta = nn.Parameter(torch.full((size,), 0.001))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        orig_dtype = x.dtype
+        x = x.to(torch.float32)
+        variance = x.pow(2).mean(-1, keepdim=True)
+        x = x * torch.rsqrt(variance + self.eps)
+        return (self.gamma * x.to(orig_dtype) + self.beta)
+
+
+class CrossAttentionBridge(nn.Module):
+    """Bottleneck cross-attention bridge that retrieves context from past latent states."""
+    def __init__(self, config: DreamConfig):
+        super().__init__()
+        d_model = config.hidden_size
+        d_b = config.cab_bottleneck_dim
+        d_ff = config.cab_mlp_expansion_dim
+
+        self.n_heads = config.cab_n_heads
+        self.n_kv_heads = config.cab_n_kv_heads
+        assert d_b % self.n_heads == 0, f"cab_bottleneck_dim ({d_b}) must be divisible by cab_n_heads ({self.n_heads})"
+        self.head_dim = d_b // self.n_heads
+
+        self.w_down = nn.Linear(d_model, d_b, bias=False)
+        self.w_down_h = nn.Linear(d_model, d_b, bias=False)
+
+        self.attn_norm_x = DreamRMSNorm(d_b, eps=config.rms_norm_eps)
+        self.attn_norm_h = DreamRMSNorm(d_b, eps=config.rms_norm_eps)
+
+        self.w_q = nn.Linear(d_b, d_b, bias=False)
+        self.w_k = nn.Linear(d_b, self.n_kv_heads * self.head_dim, bias=False)
+        self.w_v = nn.Linear(d_b, self.n_kv_heads * self.head_dim, bias=False)
+        self.w_out = nn.Linear(d_b, d_b, bias=False)
+
+        self.mlp_norm = DreamRMSNorm(d_b, eps=config.rms_norm_eps)
+        self.w1 = nn.Linear(d_b, d_ff, bias=False)
+        self.w2 = nn.Linear(d_ff, d_b, bias=False)
+        self.w3 = nn.Linear(d_b, d_ff, bias=False)
+
+        self.zero_bridge = ZeroBridgeRMSNorm(size=d_b, eps=config.rms_norm_eps)
+        self.w_up = nn.Linear(d_b, d_model, bias=False)
+
+    def reset_parameters(self):
+        nn.init.zeros_(self.zero_bridge.gamma)
+        nn.init.constant_(self.zero_bridge.beta, 0.001)
+
+    def forward(self, x: torch.Tensor, h_t: torch.Tensor) -> torch.Tensor:
+        B, L, _ = x.shape
+        _, S, _ = h_t.shape
+
+        x_b = self.w_down(x)
+        h_b = self.w_down_h(h_t)
+
+        x_norm = self.attn_norm_x(x_b)
+        h_norm = self.attn_norm_h(h_b)
+
+        q = self.w_q(x_norm).view(B, L, self.n_heads, self.head_dim).transpose(1, 2)
+        k = self.w_k(h_norm).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
+        v = self.w_v(h_norm).view(B, S, self.n_kv_heads, self.head_dim).transpose(1, 2)
+
+        if self.n_heads != self.n_kv_heads:
+            num_groups = self.n_heads // self.n_kv_heads
+            q = q.view(B, self.n_kv_heads, num_groups, L, self.head_dim)
+            k = k.unsqueeze(2)
+            v = v.unsqueeze(2)
+            a = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=False)
+            a = a.contiguous().view(B, self.n_heads, L, self.head_dim)
+        else:
+            a = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=False)
+
+        a = a.transpose(1, 2).contiguous().view(B, L, -1)
+        a = self.w_out(a)
+        x_b = x_b + a
+
+        a_norm = self.mlp_norm(x_b)
+        h_mlp = torch.nn.functional.silu(self.w1(a_norm)) * self.w3(a_norm)
+        x_b = x_b + self.w2(h_mlp)
+
+        return self.w_up(self.zero_bridge(x_b))
+
+
+class LoopholeModule(nn.Module):
+    """Persistent state injection module for loopholing across diffusion steps."""
+    def __init__(self, config: DreamConfig):
+        super().__init__()
+        self.zero_bridge = ZeroBridgeRMSNorm(size=config.hidden_size, eps=config.rms_norm_eps)
+        self.mlp = None
+        self.multi_layer_gate = None
+
+        read_layers = config.read_layers
+        if isinstance(read_layers, int):
+            read_layers = [read_layers]
+        if len(read_layers) > 1:
+            if len(read_layers) > 2:
+                raise ValueError(f"Loopholing supports at most 2 read_layers, got {len(read_layers)}.")
+            self.multi_layer_gate = nn.Parameter(torch.zeros(1))
+
+        if config.mlp_module:
+            self.mlp = nn.ModuleDict({
+                "w1": nn.Linear(config.hidden_size, config.hidden_size, bias=False),
+                "w2": nn.Linear(config.hidden_size, config.hidden_size, bias=False),
+                "w3": nn.Linear(config.hidden_size, config.hidden_size, bias=False),
+            })
+
+    def reset_parameters(self):
+        nn.init.zeros_(self.zero_bridge.gamma)
+        nn.init.constant_(self.zero_bridge.beta, 0.001)
+        if self.mlp is not None:
+            for m in self.mlp.values():
+                nn.init.trunc_normal_(m.weight, mean=0.0, std=0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, h_t: torch.Tensor) -> torch.Tensor:
+        if self.multi_layer_gate is not None and h_t.ndim == 4:
+            alpha = torch.sigmoid(self.multi_layer_gate)
+            h = alpha * h_t[:, 0] + (1.0 - alpha) * h_t[:, 1]
+        else:
+            h = h_t
+        h = self.zero_bridge(h)
+        if self.mlp is not None:
+            h = self.mlp["w2"](
+                torch.nn.functional.silu(self.mlp["w3"](h)) * self.mlp["w1"](h)
+            )
+        return h
+
+
 class DreamDecoderLayer(nn.Module):
     def __init__(self, config: DreamConfig, layer_idx: int):
         super().__init__()
@@ -620,6 +753,9 @@ class DreamBaseModel(DreamPreTrainedModel):
         self.norm = DreamRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = DreamRotaryEmbedding(config=config)
 
+        self.loophole = LoopholeModule(config) if config.use_loopholing else None
+        self.cab = CrossAttentionBridge(config) if config.use_cab else None
+
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
@@ -642,6 +778,7 @@ class DreamBaseModel(DreamPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        h_t: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple, BaseModelOutput]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -663,7 +800,7 @@ class DreamBaseModel(DreamPreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-        
+
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache()
 
@@ -678,6 +815,56 @@ class DreamBaseModel(DreamPreTrainedModel):
 
         hidden_states = inputs_embeds
 
+        # --- State persistence injection (loopholing / CAB) ---
+        intervention_ratio = None
+        gamma_mean = None
+        mask_token_id = getattr(self.config, "mask_token_id", None)
+
+        if self.cab is not None and h_t is not None:
+            if self.config.only_mask_tokens and mask_token_id is not None and input_ids is not None:
+                mask = (input_ids == mask_token_id).unsqueeze(-1)
+                delta = self.cab(hidden_states, h_t)
+                intervention_ratio = (delta * mask).std().item() / hidden_states.std().clamp_min(1e-6).item()
+                gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
+                hidden_states = torch.where(mask, hidden_states + delta, hidden_states)
+            else:
+                delta = self.cab(hidden_states, h_t)
+                intervention_ratio = delta.std().item() / hidden_states.std().clamp_min(1e-6).item()
+                gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
+                hidden_states = hidden_states + delta
+        elif self.loophole is not None and h_t is not None:
+            if self.config.only_mask_tokens and mask_token_id is not None and input_ids is not None:
+                mask = (input_ids == mask_token_id).unsqueeze(-1)
+                h_t_masked = h_t * mask.unsqueeze(1) if h_t.ndim == 4 else h_t * mask
+                delta = self.loophole(h_t_masked)
+                intervention_ratio = (delta * mask).std().item() / hidden_states.std().clamp_min(1e-6).item()
+                gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                hidden_states = torch.where(mask, hidden_states + delta, hidden_states)
+            else:
+                delta = self.loophole(h_t)
+                intervention_ratio = delta.std().item() / hidden_states.std().clamp_min(1e-6).item()
+                gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                hidden_states = hidden_states + delta
+        elif (self.cab is not None or self.loophole is not None) and h_t is None:
+            h_t0 = torch.randn_like(hidden_states) * (self.config.hidden_size ** -0.5)
+            if self.cab is not None:
+                delta = self.cab(hidden_states, h_t0)
+                intervention_ratio = delta.std().item() / hidden_states.std().clamp_min(1e-6).item()
+                gamma_mean = self.cab.zero_bridge.gamma.abs().mean().item()
+                hidden_states = hidden_states + delta
+            else:
+                if self.config.only_mask_tokens and mask_token_id is not None and input_ids is not None:
+                    mask = (input_ids == mask_token_id).unsqueeze(-1)
+                    delta = self.loophole(h_t0 * mask)
+                    intervention_ratio = (delta * mask).std().item() / hidden_states.std().clamp_min(1e-6).item()
+                    gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                    hidden_states = torch.where(mask, hidden_states + delta, hidden_states)
+                else:
+                    delta = self.loophole(h_t0)
+                    intervention_ratio = delta.std().item() / hidden_states.std().clamp_min(1e-6).item()
+                    gamma_mean = self.loophole.zero_bridge.gamma.abs().mean().item()
+                    hidden_states = hidden_states + delta
+
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
@@ -685,7 +872,14 @@ class DreamBaseModel(DreamPreTrainedModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        for decoder_layer in self.layers:
+        # Resolve read_layers for h_s collection
+        read_layers = self.config.read_layers
+        if isinstance(read_layers, int):
+            read_layers = [read_layers]
+        read_layers_set = set(read_layers)
+        collected_h_s = {}
+
+        for layer_idx, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -715,6 +909,9 @@ class DreamBaseModel(DreamPreTrainedModel):
 
             hidden_states = layer_outputs[0]
 
+            if layer_idx in read_layers_set:
+                collected_h_s[layer_idx] = hidden_states
+
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
@@ -724,13 +921,36 @@ class DreamBaseModel(DreamPreTrainedModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
+        # Compute h_s for state persistence
+        use_state = self.cab is not None or self.loophole is not None
+        if use_state:
+            h_s_list = [collected_h_s[idx] for idx in read_layers if idx in collected_h_s]
+            if -1 in read_layers_set:
+                h_s_list.append(hidden_states)
+            if not h_s_list:
+                h_s = hidden_states
+            elif len(h_s_list) == 1:
+                h_s = h_s_list[0]
+            else:
+                h_s = torch.cat(h_s_list, dim=1) if self.cab is not None else torch.stack(h_s_list, dim=1)
+        else:
+            h_s = None
+
         if not return_dict:
             return tuple(v for v in [hidden_states, all_hidden_states, all_self_attns] if v is not None)
-        return BaseModelOutput(
+
+        result = BaseModelOutput(
             last_hidden_state=hidden_states,
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
+        if h_s is not None:
+            result.h_s = h_s
+        if intervention_ratio is not None:
+            result.intervention_ratio = intervention_ratio
+        if gamma_mean is not None:
+            result.gamma_mean = gamma_mean
+        return result
 
 
 class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
@@ -782,6 +1002,7 @@ class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         num_logits_to_keep: int = 0,
+        h_t: Optional[torch.FloatTensor] = None,
         **loss_kwargs,
     ) -> Union[Tuple, MaskedLMOutput]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -828,6 +1049,7 @@ class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            h_t=h_t,
         )
 
         hidden_states = outputs[0]
@@ -842,9 +1064,19 @@ class DreamModel(DreamGenerationMixin, DreamPreTrainedModel):
             output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
-        return MaskedLMOutput(
+        result = MaskedLMOutput(
             loss=loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+        h_s = getattr(outputs, "h_s", None)
+        if h_s is not None:
+            result.h_s = h_s
+        intervention_ratio = getattr(outputs, "intervention_ratio", None)
+        if intervention_ratio is not None:
+            result.intervention_ratio = intervention_ratio
+        gamma_mean = getattr(outputs, "gamma_mean", None)
+        if gamma_mean is not None:
+            result.gamma_mean = gamma_mean
+        return result

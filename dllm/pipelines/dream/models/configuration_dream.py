@@ -47,6 +47,16 @@ class DreamConfig(PretrainedConfig):
         attention_dropout=0.0,
         mask_token_id=151666,
         pad_token_id=151643,
+        # State persistence (loopholing / CAB)
+        use_loopholing=False,
+        only_mask_tokens=False,
+        mlp_module=False,
+        use_cab=False,
+        cab_bottleneck_dim=128,
+        cab_mlp_expansion_dim=512,
+        cab_n_heads=8,
+        cab_n_kv_heads=4,
+        read_layers=None,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -76,7 +86,20 @@ class DreamConfig(PretrainedConfig):
         if self.rope_scaling is not None and "type" in self.rope_scaling:
             self.rope_scaling["rope_type"] = self.rope_scaling["type"]
         rope_config_validation(self)
-        
+
+        # State persistence fields
+        self.use_loopholing = use_loopholing
+        self.only_mask_tokens = only_mask_tokens
+        self.mlp_module = mlp_module
+        self.use_cab = use_cab
+        self.cab_bottleneck_dim = cab_bottleneck_dim
+        self.cab_mlp_expansion_dim = cab_mlp_expansion_dim
+        self.cab_n_heads = cab_n_heads
+        self.cab_n_kv_heads = cab_n_kv_heads
+        self.read_layers = read_layers if read_layers is not None else [-1]
+        if isinstance(self.read_layers, int):
+            self.read_layers = [self.read_layers]
+
         super().__init__(
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
