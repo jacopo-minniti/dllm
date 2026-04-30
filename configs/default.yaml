@@ -33,6 +33,8 @@ training:
     save_only_model: False
 
 evaluation:
+  # Default eval target: llada. For dream, set eval_model: dream-7b in your eval config
+  # (resolves to model=dream, script_path=dllm/pipelines/dream/eval.py).
   script_path: "dllm/pipelines/llada/eval.py"
   model: "llada"
   tasks: "math500_reasoning"
@@ -46,6 +48,9 @@ evaluation:
   model_args:
     max_new_tokens: 512
     steps: 256
-    block_size: 32
+    block_size: 32   # llada only; ignored by dream eval harness
     temperature: 0.0
     cfg_scale: 0.0
+    # dream-specific (no-ops for llada):
+    alg: "maskgit_plus"
+    right_shift_logits: True

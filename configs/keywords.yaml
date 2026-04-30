@@ -9,6 +9,8 @@ models:
   llada-8b: "GSAI-ML/LLaDA-8B-Base"
   llada-instruct: "GSAI-ML/LLaDA-8B-Instruct"
   fast-dllm: "Efficient-Large-Model/Fast_dLLM_v2_1.5B"
+  dream-7b: "Dream-org/Dream-v0-Base-7B"
+  dream-7b-instruct: "Dream-org/Dream-v0-Instruct-7B"
 
 # Shortcuts: When these keys are found in your YAML, they are expanded
 # into the specified set of parameters.
@@ -24,6 +26,12 @@ shortcuts:
     fast-dllm:
       model_name_or_path: "fast-dllm"
       script_path: "examples/fastdllm_v2/sft.py"
+    dream-7b:
+      model_name_or_path: "dream-7b"
+      script_path: "examples/dream/sft.py"
+    dream-7b-instruct:
+      model_name_or_path: "dream-7b-instruct"
+      script_path: "examples/dream/sft.py"
 
   # Evaluation Model Shortcuts (Sets name and evaluation script)
   eval_model:
@@ -33,6 +41,12 @@ shortcuts:
     fast-dllm:
       model: "fastdllm_v2"
       script_path: "dllm/pipelines/fastdllm_v2/eval.py"
+    dream-7b:
+      model: "dream"
+      script_path: "dllm/pipelines/dream/eval.py"
+    dream-7b-instruct:
+      model: "dream"
+      script_path: "dllm/pipelines/dream/eval.py"
   # Mode Shortcuts (Controls multiple intervention flags and loss_type)
   mode:
     base:

@@ -1,0 +1,19 @@
+training:
+  core:
+    model: dream-7b-instruct
+    mode: cab_all
+    backbone: frozen
+    epochs: small
+    bptt: 2
+    cab_size: small
+    read_layers: 24
+    injection: all
+
+  hyperparameters:
+    learning_rate: 2e-05
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 4
+
+  dataset:
+    dataset: tulu
+    use_chat_template: True
