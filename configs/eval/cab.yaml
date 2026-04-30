@@ -3,7 +3,7 @@ evaluation:
   num_fewshot: 4
   
   model_args:
-    pretrained: ".models/LLaDA-8B-Base/NuminaMath-CoT-LLaDA-Goldilocks/base-puma-bptt-cab/lr2e-05_bs256_puma-th0.15_bptt2_cab-b1024-e2048-rl17/checkpoint-200"
+    pretrained: .models/LLaDA-8B-Base/tulu-3-sft-mixture/base-puma-bptt-cab/lr2e-05_bs128_puma-th0.15_bptt2_cab-b512-e1024-rl17/checkpoint-378
     
     use_cab: True
     cab_size: small
