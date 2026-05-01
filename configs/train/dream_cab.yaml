@@ -6,7 +6,7 @@ training:
     epochs: small
     bptt: 2
     cab_size: small
-    read_layers: 24
+    read_layers: 18
     injection: all
 
   hyperparameters:

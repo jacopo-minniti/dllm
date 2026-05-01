@@ -89,24 +89,30 @@ class MDLMTrainer(transformers.Trainer):
         if model_type:
             self.add_callback(ModelingFilesSyncCallback(model_type))
 
+        # postprocess_fn applies right_shift_logits for causal models (e.g. Dream)
+        _postprocess = self._postprocess_outputs if args.right_shift_logits else None
+
         # Registry of loss functions
         self.loss_fns = {
             "mlm": MLMLoss(self.processing_class.mask_token_id),
             "puma": PumaLoss(
-                self.processing_class.mask_token_id, 
-                threshold=args.puma_threshold, 
-                confidence_type=args.confidence_type
+                self.processing_class.mask_token_id,
+                threshold=args.puma_threshold,
+                confidence_type=args.confidence_type,
+                postprocess_fn=_postprocess,
             ),
             "bptt": LoopholingBPTTLoss(
-                self.processing_class.mask_token_id, 
-                num_steps=args.bptt_steps
+                self.processing_class.mask_token_id,
+                num_steps=args.bptt_steps,
+                postprocess_fn=_postprocess,
             ),
             "puma_bptt": LoopholingBPTTPumaLoss(
-                self.processing_class.mask_token_id, 
-                threshold=args.puma_threshold, 
+                self.processing_class.mask_token_id,
+                threshold=args.puma_threshold,
                 num_steps=args.bptt_steps,
                 confidence_type=args.confidence_type,
-                weighted_ce=args.weighted_ce
+                weighted_ce=args.weighted_ce,
+                postprocess_fn=_postprocess,
             ),
         }
         self.loss_fn = self.loss_fns.get(args.loss_type, self.loss_fns["mlm"])
@@ -273,6 +279,7 @@ class MDLMTrainer(transformers.Trainer):
             )
 
             outputs = model(input_ids=noised_input_ids, attention_mask=attention_mask)
+            outputs = self._postprocess_outputs(outputs)
             logits = outputs.logits
             token_nll = F.cross_entropy(
                 logits.transpose(1, 2),

@@ -49,12 +49,13 @@ class MLMLoss(nn.Module):
         return loss, outputs
 
 class PumaLoss(nn.Module):
-    def __init__(self, mask_token_id: int, threshold: float = 0.15, confidence_type: str = "top_prob"):
+    def __init__(self, mask_token_id: int, threshold: float = 0.15, confidence_type: str = "top_prob", postprocess_fn=None):
         super().__init__()
         _validate_confidence_type(confidence_type)
         self.mask_token_id = mask_token_id
         self.threshold = threshold
         self.confidence_type = confidence_type
+        self.postprocess_fn = postprocess_fn
 
     def forward(self, model, streaming_batch, slots: Optional[torch.Tensor] = None, **kwargs):
         batch = streaming_batch.get_batch(slots=slots)
@@ -67,9 +68,11 @@ class PumaLoss(nn.Module):
 
         # Forward pass
         outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
+        if self.postprocess_fn is not None:
+            outputs = self.postprocess_fn(outputs)
         logits = outputs.logits
         h_s = getattr(outputs, "h_s", None)
-        
+
         # Attach stats for logging
         outputs.stats = {
             "intervention_ratio": getattr(outputs, "intervention_ratio", None),
@@ -103,10 +106,11 @@ class PumaLoss(nn.Module):
         return loss, outputs
 
 class LoopholingBPTTLoss(nn.Module):
-    def __init__(self, mask_token_id: int, num_steps: int = 2):
+    def __init__(self, mask_token_id: int, num_steps: int = 2, postprocess_fn=None):
         super().__init__()
         self.mask_token_id = mask_token_id
         self.num_steps = num_steps
+        self.postprocess_fn = postprocess_fn
 
     def forward(self, model, batch, **kwargs):
         input_ids = batch["input_ids"].clone()
@@ -141,9 +145,11 @@ class LoopholingBPTTLoss(nn.Module):
             )
             with _sync_ctx:
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
+            if self.postprocess_fn is not None:
+                outputs = self.postprocess_fn(outputs)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
-            
+
             # Capture stats
             if getattr(outputs, "intervention_ratio", None) is not None:
                 stats["intervention_ratio"].append(outputs.intervention_ratio)
@@ -159,8 +165,7 @@ class LoopholingBPTTLoss(nn.Module):
                     f"BPTT step {t}: zero masked tokens (mask_token_id={self.mask_token_id}). "
                     "Skipping loss for this step. If this persists, check dataset labels."
                 )
-                dummy_loss = 0.0 * logits.sum()
-                loss_terms.append(dummy_loss)
+                loss_terms.append(torch.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=0.0).sum() * 0.0)
                 break
             
             loss_t = F.cross_entropy(
@@ -191,7 +196,7 @@ class LoopholingBPTTLoss(nn.Module):
         return total_loss, outputs
 
 class LoopholingBPTTPumaLoss(nn.Module):
-    def __init__(self, mask_token_id: int, threshold: float = 0.15, num_steps: int = 2, confidence_type: str = "top_prob", weighted_ce: bool = False):
+    def __init__(self, mask_token_id: int, threshold: float = 0.15, num_steps: int = 2, confidence_type: str = "top_prob", weighted_ce: bool = False, postprocess_fn=None):
         super().__init__()
         _validate_confidence_type(confidence_type)
         self.mask_token_id = mask_token_id
@@ -199,6 +204,7 @@ class LoopholingBPTTPumaLoss(nn.Module):
         self.num_steps = num_steps
         self.confidence_type = confidence_type
         self.weighted_ce = weighted_ce
+        self.postprocess_fn = postprocess_fn
 
     def forward(self, model, streaming_batch, slots: Optional[torch.Tensor] = None, **kwargs):
         batch = streaming_batch.get_batch(slots=slots)
@@ -232,6 +238,8 @@ class LoopholingBPTTPumaLoss(nn.Module):
             )
             with _sync_ctx:
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask, h_t=h_t, labels=None)
+            if self.postprocess_fn is not None:
+                outputs = self.postprocess_fn(outputs)
             logits = outputs.logits
             h_s = getattr(outputs, "h_s", None)
 
@@ -251,7 +259,7 @@ class LoopholingBPTTPumaLoss(nn.Module):
                     f"maskable={maskable_mask.sum().item()}). "
                     "Skipping loss for this step. If this persists, check dataset labels."
                 )
-                loss_terms.append(0.0 * logits.sum())
+                loss_terms.append(torch.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=0.0).sum() * 0.0)
                 break
 
             loss_t = F.cross_entropy(
