@@ -48,6 +48,9 @@ class MDLMTrainer(transformers.Trainer):
         *pargs,
         **kwargs,
     ):
+        # `tokenizer=` was the old API; pop it so it doesn't conflict with processing_class=
+        if processing_class is None:
+            processing_class = kwargs.pop("tokenizer", None)
         super().__init__(args=args, processing_class=processing_class, *pargs, **kwargs)
 
         if not (0.0 < args.time_epsilon < 1.0):
