@@ -347,19 +347,9 @@ class MDLMTrainer(transformers.Trainer):
                     extra_slots = self.active_streaming_batch.pick_random_slots(needed)
                     slots = torch.cat([slots, extra_slots]) if len(slots) > 0 else extra_slots
 
-                if _do_debug:
-                    print(f"[TRAINER DEBUG] Final selected slots={slots.tolist()}", flush=True)
-
                 # Only run loss on selected slots (fixes OOM)
                 loss, outputs = self.loss_fn(model, self.active_streaming_batch, slots=slots)
 
-                if _do_debug:
-                    print(
-                        f"[TRAINER DEBUG] loss_fn returned loss={loss.item():.6f}  "
-                        f"loss.requires_grad={loss.requires_grad}",
-                        flush=True,
-                    )
-                
                 # Meter update for processed slots
                 with torch.no_grad():
                     batch = self.active_streaming_batch.get_batch(slots=slots)
